@@ -1,0 +1,38 @@
+export const useAclStore = defineStore('acl', {
+  state: (): AclModuleType => ({
+    admin: false,
+    role: [] as string[],
+    permission: [] as string[],
+    configuration: {} as any,
+    seo: {} as any,
+    languages: {} as any,
+    defaultItem: {} as any, // 现在类型校验通过
+    tolerance: {} as any,
+    intensity: {} as any,
+    material: {} as any,
+  }),
+  getters: {
+    getAdmin: (state) => state.admin,
+    getRole: (state) => state.role,
+    getPermission: (state) => state.permission,
+    getEnum: (state) => state.configuration,
+    getSeo: (state) => state.seo,
+    getLanguages: (state) => state.languages,
+    getDefaultItem: (state) => state.defaultItem,
+    getTolerance: (state) => state.tolerance,
+    getIntensity: (state) => state.intensity,
+    getMaterial: (state) => state.material,
+  },
+  actions: {
+    setFull(admin: boolean) { this.admin = admin },
+    setRole(role: string[]) { this.role = role },
+    setPermission(permission: string[]) { this.permission = permission },
+    setEnum(configuration: any) { this.configuration = configuration },
+    setSeo(seo: any) { this.seo = seo },
+    setLanguages(languages: any) { this.languages = languages },
+    setDefaultItem(defaultItem: any) { this.defaultItem = defaultItem },
+    setTolerance(tolerance: any) { this.tolerance = tolerance },
+    setIntensity(intensity: any) { this.intensity = intensity },
+    setMaterial(material: any) { this.material = material },
+  },
+})

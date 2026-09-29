@@ -1,0 +1,213 @@
+[
+    {
+        "meta": {
+            "icon": "home-2-line",
+            "title": "首页",
+            "hidden": true,
+            "levelHidden": true,
+            "breadcrumbHidden": true
+        },
+        "name": "Root",
+        "path": "/",
+        "children": [
+            {
+                "meta": {
+                    "icon": "home-2-line",
+                    "title": "首页",
+                    "noColumn": true,
+                    "noKeepAlive": false
+                },
+                "name": "Index",
+                "path": "index",
+                "redirect": "/standards/products"
+            }
+        ],
+        "component": "Layout"
+    },
+    {
+        "meta": {
+            "icon": "bnb-fill",
+            "title": "标准查询"
+        },
+        "name": "StandardsRoot",
+        "path": "/standards",
+        "children": [
+            {
+                "meta": {
+                    "icon": "compasses-2-fill",
+                    "title": "产品标准",
+                    "noColumn": true,
+                    "noKeepAlive": false
+                },
+                "name": "StandardsProducts",
+                "path": "/products",
+                "component": "/@/views/standards/products/index.vue"
+            },
+            {
+                "meta": {
+                    "icon": "bring-to-front",
+                    "title": "表面标准",
+                    "noColumn": true,
+                    "noKeepAlive": false
+                },
+                "name": "StandardsExteriors",
+                "path": "/exteriors",
+                "children": [],
+                "component": "/@/views/standards/exteriors/index.vue"
+            },
+            {
+                "meta": {
+                    "icon": "progress-4-fill",
+                    "title": "性能标准",
+                    "noColumn": true,
+                    "noKeepAlive": false
+                },
+                "name": "StandardsCapabilities",
+                "path": "/capabilities",
+                "children": [],
+                "component": "/@/views/standards/capabilities/index.vue"
+            },
+            {
+                "meta": {
+                    "icon": "format-clear",
+                    "title": "材料标准",
+                    "noColumn": true,
+                    "noKeepAlive": false
+                },
+                "name": "StandardsMaterials",
+                "path": "/materials",
+                "component": "/@/views/standards/materials/index.vue"
+            },
+            {
+                "meta": {
+                    "icon": "file-pdf-line",
+                    "title": "资料文档",
+                    "noColumn": true,
+                    "noKeepAlive": false
+                },
+                "name": "StandardsDocs",
+                "path": "/docs",
+                "component": "/@/views/standards/docs/index.vue"
+            }
+        ],
+        "component": "Layout"
+    },
+    {
+        "meta": {
+            "icon": "admin-fill",
+            "title": "会员中心"
+        },
+        "name": "CentersRoot",
+        "path": "/centers",
+        "children": [
+            {
+                "meta": {
+                    "icon": "arrow-down-circle-fill",
+                    "title": "资料下载",
+                    "noColumn": true,
+                    "noKeepAlive": false
+                },
+                "name": "CentersDocs",
+                "path": "/docs",
+                "component": "/@/views/centers/docs/index.vue"
+            },
+            {
+                "meta": {
+                    "icon": "battery-2-charge-fill",
+                    "title": "积分",
+                    "noColumn": true,
+                    "noKeepAlive": false
+                },
+                "name": "CentersCredits",
+                "path": "/credits",
+                "component": "/@/views/centers/credits/index.vue"
+            },
+            {
+                "meta": {
+                    "icon": "vip-crown-2-fill",
+                    "title": "订阅",
+                    "noColumn": true,
+                    "noKeepAlive": false
+                },
+                "name": "CentersSubscription",
+                "path": "/subscription",
+                "component": "/@/views/centers/subscription/index.vue"
+            },
+            {
+                "meta": {
+                    "icon": "bill-fill",
+                    "title": "订单管理",
+                    "noColumn": true,
+                    "noKeepAlive": false
+                },
+                "name": "CentersOrders",
+                "path": "/orders",
+                "component": "/@/views/centers/orders/index.vue"
+            },
+            {
+                "meta": {
+                    "icon": "ticket-fill",
+                    "title": "序列号",
+                    "noColumn": true,
+                    "noKeepAlive": false
+                },
+                "name": "CentersSerials",
+                "path": "/serials",
+                "component": "/@/views/centers/serials/index.vue"
+            },
+            {
+                "meta": {
+                    "icon": "shopping-bag-3-fill",
+                    "title": "我的已购标准",
+                    "noColumn": true,
+                    "noKeepAlive": false
+                },
+                "name": "CentersPurchased",
+                "path": "/purchased",
+                "component": "/@/views/centers/purchased/index.vue"
+            },
+            {
+                "meta": {
+                    "icon": "arrow-up-circle-fill",
+                    "title": "标准更新",
+                    "noColumn": true,
+                    "noKeepAlive": false
+                },
+                "name": "CentersUpdates",
+                "path": "/updates",
+                "component": "/@/views/centers/updates/index.vue"
+            }
+        ],
+        "component": "Layout"
+    },
+    {
+        "meta": {
+            "icon": "settings-3-line",
+            "title": "系统设置"
+        },
+        "name": "SystemsRoot",
+        "path": "/systems",
+        "children": [
+            {
+                "meta": {
+                    "icon": "computer-line",
+                    "title": "客户端设置",
+                    "noColumn": true,
+                    "noKeepAlive": false
+                },
+                "name": "SystemsClients",
+                "path": "/clients",
+                "component": "/@/views/systems/clients/index.vue"
+            }
+        ],
+        "component": "Layout"
+    },
+    {
+        "meta": {
+            "hidden": true
+        },
+        "name": "NotFound",
+        "path": "/:pathMatch(.*)*",
+        "redirect": "/404"
+    }
+]

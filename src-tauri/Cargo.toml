@@ -17,12 +17,32 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+serde_json = "1"
 
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+# 更新能力（旧 electron-updater 的替代实现）
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# 本地数据库：SQLCipher 加密（bundled-sqlcipher-vendored-openssl 自带 OpenSSL，免系统依赖）
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
+# 时间格式化（对齐老项目 dayjs / db.fn.now() 的 UTC 时间戳）
+chrono = { version = "0.4", features = ["serde"] }
+# 随机密钥（每设备随机生成 SQLCipher 密钥）
+rand = "0.8"
+hex = "0.4"
+# 字段级加密（对齐老项目 cast/crypt.ts 的 AES-256-CBC）
+aes = "0.8"
+cbc = { version = "0.1", features = ["block-padding"] }
+sha2 = "0.10"
+# HTTP 统一在 Rust 侧发起（前端不再直连后端）
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+# 系统信息（system_get_info：CPU 数 / 内存 / 主机名）
+sysinfo = "0.32"
+# 缓存文件名唯一化
+uuid = { version = "1", features = ["v4"] }
 
 [profile.release]
 codegen-units = 1

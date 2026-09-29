@@ -82,4 +82,3 @@ books/
 
 - [x] Tauri v2 + Vue3 + Vite + TS 骨架搭建
 - [ ] 业务模块迁移（渲染层、Rust 侧命令、本地存储、与 gateway 的同步协议）—— 尚未开始
-*（内容由AI生成，仅供参考）*
