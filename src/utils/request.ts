@@ -4,6 +4,8 @@ import { contentType, debounce, messageName, statusName, successCode, timeout } 
 import router from '/@/router'
 import { useUserStore } from '/@/store/modules/user'
 import { isArray } from '/@/utils/validate'
+// [P0-2 迁移修复] Tauri 环境统一经 Rust http_request 发起（生产包无 dev server 代理）
+import { isTauriRuntime, tauriHttpRequest } from '/@/utils/tauriHttp'
 import { addErrorLog, needErrorLog } from '/@vab/plugins/errorLog'
 import { gp } from '/@vab/plugins/vab'
 
@@ -21,22 +23,17 @@ const sha256 = (str: string): string => {
 }
 
 // 加密函数
-const encrypt = (encryptedData: any, key: string, iv: string): string => {
-  if (key.length !== 32 || iv.length !== 16) {
-    throw new Error('Invalid key or iv length')
+// [P2-5 契约对齐] 网关 Crypto.encrypt 已升级为「随机 IV 前缀」格式（iv hex + ':' + cipher hex），
+// 客户端同步改为每次请求随机 IV 并前缀传输；VITE_APP_IV 仅作为读取旧格式响应的解密兜底。
+const encrypt = (encryptedData: any, key: string): string => {
+  if (key.length !== 32) {
+    throw new Error('Invalid key length')
   }
-  // 将 key 和 iv 转换为 CryptoJS WordArray 格式
   const keyWordArray = CryptoJS.enc.Utf8.parse(key)
-  const ivWordArray = CryptoJS.enc.Utf8.parse(iv)
-
-  // 验证 key 和 iv 的长度
-  if (key.length !== 32 || iv.length !== 16) {
-    throw new Error('Invalid key or iv length')
-  }
-
+  const ivWordArray = CryptoJS.lib.WordArray.random(16)
   const encryptedText = JSON.stringify(encryptedData)
   const encrypted = CryptoJS.AES.encrypt(encryptedText, keyWordArray, { iv: ivWordArray }).ciphertext.toString(CryptoJS.enc.Hex)
-  return encrypted
+  return `${ivWordArray.toString(CryptoJS.enc.Hex)}:${encrypted}`
 }
 // 解密函数
 // 兼容后端两种响应格式：
@@ -81,12 +78,14 @@ const decrypt = (encryptedText: string, key: string, iv: string): any => {
   }
 }
 
+// [P1-4] 随机串改用 crypto.getRandomValues（CSPRNG），替换 Math.random
 const generateRandomString = (length: number) => {
-  let result = ''
   const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-  const charactersLength = characters.length
+  const bytes = new Uint8Array(length)
+  crypto.getRandomValues(bytes)
+  let result = ''
   for (let i = 0; i < length; i++) {
-    result += characters.charAt(Math.floor(Math.random() * charactersLength))
+    result += characters.charAt(bytes[i] % characters.length)
   }
   return result
 }
@@ -141,9 +140,9 @@ const requestConf = (config: any): any => {
   }
 
   if (import.meta.env.VITE_REQUEST_ENCRYPT === 'true' && config.data) {
-    const iv = generateRandomString(16)
+    // [P2-5 契约对齐] 随机 IV 前缀格式，见 encrypt 注释；VITE_APP_IV 不再参与请求加密
     config.data = {
-      encryptedData: encrypt(config.data, import.meta.env.VITE_APP_SECRET, import.meta.env.VITE_APP_IV || iv),
+      encryptedData: encrypt(config.data, import.meta.env.VITE_APP_SECRET),
     }
   }
 
@@ -159,7 +158,7 @@ const requestConf = (config: any): any => {
  * @param config {any} 请求配置
  * @param data {any} response数据
  * @param status {any} HTTP status
- * @param statusText {any} HTTP status text
+ * @param statusText {any} status text
  * @returns {Promise<*|*>}
  */
 const handleData = async ({
@@ -178,11 +177,12 @@ const handleData = async ({
   const { resetAll, setToken } = useUserStore()
   if (headers['auth-token']) setToken(headers['auth-token'])
   if (loadingInstance) loadingInstance.close()
-  // 若data.code存在，覆盖默认code
-  const statusCode = data && data[statusName] ? data[statusName] : status
-  let code = data && data[statusName] ? Number((data[statusName] || 200).toString().substring(0, 3)) : status
+  // [P2-6] data 可能为空（204/空响应体），统一安全取值
+  const bodyCode = data && data[statusName] ? data[statusName] : null
+  const statusCode = bodyCode !== null ? bodyCode : status
+  let code = bodyCode !== null ? Number((bodyCode || 200).toString().substring(0, 3)) : status
   // 若code属于操作正常code，则status修改为200
-  if (codeVerificationArray.indexOf(data[statusName]) + 1) code = 200
+  if (bodyCode !== null && codeVerificationArray.indexOf(bodyCode) + 1) code = 200
   if (import.meta.env.VITE_USER_NODE_ENV === 'development') console.log('data:', data)
   if (import.meta.env.VITE_RETURN_ENCRYPT === 'true' && data?.encryptedData) {
     // 有加密返回时解密
@@ -190,7 +190,7 @@ const handleData = async ({
     delete data.encryptedData
     if (import.meta.env.VITE_USER_NODE_ENV === 'development') console.log('data:', data)
   }
-  if (import.meta.env.VITE_USER_NODE_ENV === 'development') console.log('development:', { ...data.data })
+  if (import.meta.env.VITE_USER_NODE_ENV === 'development' && data?.data) console.log('development:', { ...data.data })
   switch (code) {
     case 200:
       // 业务层级错误处理，以下是假定restful有一套统一输出格式(指不管成功与否都有相应的数据格式)情况下进行处理
@@ -203,9 +203,14 @@ const handleData = async ({
     case 402:
       // C-B3/C-B5: 网关无真实 refreshToken 接口（原 tryRefreshToken 为死代码，令牌过期会令并发请求永久 pending），
       // 令牌失效/过期统一登出并提前返回，避免继续触发错误提示与 rejection
-      resetAll().then(() => {
-        router.push({ path: '/login', replace: true }).then(() => {})
-      })
+      // [P2-6] 并发 401 防抖：登出进行中不再重复触发，避免多次跳转
+      if (!isResetting) {
+        isResetting = true
+        resetAll().finally(() => {
+          isResetting = false
+          router.push({ path: '/login', replace: true }).then(() => {})
+        })
+      }
       return
     case 403:
       // return await setSiteConfig(config)
@@ -220,8 +225,11 @@ const handleData = async ({
   if (needErrorLog()) addErrorLog({ message: errMsg, stack: data, isRequest: true })
   return Promise.reject(data)
 }
+// [P2-6] 401/402 登出防抖标记
+let isResetting = false
+
 /**
- * @description axios初始化
+ * axios初始化
  */
 const instance = axios.create({
   baseURL: `${import.meta.env.VITE_APP_BASE_URL || '/api'}`,
@@ -232,14 +240,43 @@ const instance = axios.create({
 })
 
 /**
- * @description axios请求拦截器
+ * [P0-2] Tauri 环境统一请求入口。
+ *
+ * 生产包由 tauri://localhost 加载，axios 相对路径 baseURL 无 dev server 代理可解析；
+ * 签名头（App-Id/App-Nonce/App-Secret/X-Sign）与加密体由 tauriHttpRequest 统一补齐，
+ * 响应仍交 handleData 复用信封 code 分支 / 401 登出 / 错误提示。
+ */
+const tauriRequest = async (config: any): Promise<any> => {
+  // 模拟 requestConf 中被 handleData 消费的字段
+  const merged = { retryCount: 0, ...config }
+  const response = await tauriHttpRequest({
+    url: merged.url,
+    method: merged.method,
+    data: merged.data,
+    params: merged.params,
+    headers: merged.headers,
+  })
+  return handleData(response)
+}
+
+/**
+ * 统一请求入口：Tauri 环境走 Rust http_request，其余（dev 浏览器）走 axios。
+ * 保留 axios 实例导出形态（default export 可调用、可挂拦截器），调用方无感。
+ */
+const request = async (config: any): Promise<any> => {
+  if (isTauriRuntime()) return tauriRequest(config)
+  return instance(config)
+}
+
+/**
+ * axios请求拦截器
  */
 instance.interceptors.request.use(requestConf, (error) => {
   return Promise.reject(error)
 })
 
 /**
- * @description axios响应拦截器
+ * axios响应拦截器
  */
 instance.interceptors.response.use(
   // 2xx 范围内的状态码都会触发该函数。
@@ -248,7 +285,7 @@ instance.interceptors.response.use(
   (error) => {
     const { response, config } = error
     // 网络错误时重试一次（仅在无响应时，即真正的网络问题）
-    if (response === undefined && config.retryCount < 1) {
+    if (response === undefined && config?.retryCount < 1) {
       config.retryCount++
       // 深拷贝 data 避免请求拦截器副作用影响重试
       if (config.data) config.data = JSON.parse(JSON.stringify(config.data))
@@ -261,9 +298,10 @@ instance.interceptors.response.use(
         'error',
         'hey'
       )
-      return {}
+      // [P2-6] 保持 reject 语义（原 return {} 吞错会让调用方解构 data 时炸出误导性 TypeError）
+      return Promise.reject(new Error('Network unreachable'))
     } else return handleData(response)
   }
 )
 
-export default instance
+export default request
