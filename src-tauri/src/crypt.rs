@@ -10,6 +10,7 @@
 //!     需由业务提供密钥并以环境变量注入；否则这些字段以密文原样返回（见实现报告「遗留事项」）。
 
 use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use rand::Rng;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -21,6 +22,9 @@ type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 pub struct FieldCrypt {
     key: Option<[u8; 32]>,
     iv: Option<[u8; 16]>,
+    /// 未显式配置 `EDTIB_FIELD_CRYPT_IV` 时按随机 IV 前置写出；
+    /// 显式配置 IV 表示处于「与老 Electron 数据互读写」的兼容模式，沿用固定 IV。
+    random_iv: bool,
 }
 
 impl std::fmt::Debug for FieldCrypt {
@@ -65,13 +69,16 @@ impl FieldCrypt {
                 iv_bytes.copy_from_slice(&digest[..16]);
 
                 Self {
-                    key: Some(key),
                     iv: Some(iv_bytes),
+                    key: Some(key),
+                    // 未显式给定 IV => 写出时改用随机 IV 前置（不再使用 secret 派生的固定 IV）
+                    random_iv: iv.is_none(),
                 }
             }
             None => Self {
-                key: None,
                 iv: None,
+                key: None,
+                random_iv: true,
             },
         }
     }
@@ -118,13 +125,24 @@ impl FieldCrypt {
         None
     }
 
-    /// 加密：JSON 值 -> hex 密文（与老实现 `JSON.stringify` + AES-256-CBC 等价）
+    /// 加密：JSON 值 -> hex 密文。
+    ///
+    /// [安全加固] 每次加密随机生成 IV 并前置到密文（`hex(iv || cipher)`），
+    /// 避免固定 IV 下「同明文 => 同密文」的 CBC 模式泄露。
+    /// 解密侧 `decrypt_value` 本就兼容固定 IV 与前置 IV 两种格式，存量数据仍可读。
     pub fn encrypt_value(&self, value: &Value) -> Option<String> {
-        let (key, iv) = match (self.key, self.iv) {
+        let (key, fixed_iv) = match (self.key, self.iv) {
             (Some(key), Some(iv)) => (key, iv),
             _ => return None,
         };
         let text = serde_json::to_string(value).ok()?;
+        let iv: [u8; 16] = if self.random_iv {
+            let mut random = [0u8; 16];
+            rand::thread_rng().fill(&mut random);
+            random
+        } else {
+            fixed_iv
+        };
         let cipher = Aes256CbcEnc::new(&key.into(), &iv.into());
         // PKCS7 填充：预留一个块（16 字节）的填充空间，用 encrypt_padded_mut 原地加密
         let mut buffer = text.as_bytes().to_vec();
@@ -133,7 +151,14 @@ impl FieldCrypt {
         let encrypted = cipher
             .encrypt_padded_mut::<Pkcs7>(&mut buffer, message_len)
             .ok()?;
-        Some(hex::encode(encrypted))
+        let output = if self.random_iv {
+            let mut prefixed = iv.to_vec();
+            prefixed.extend_from_slice(encrypted);
+            prefixed
+        } else {
+            encrypted.to_vec()
+        };
+        Some(hex::encode(output))
     }
 }
 

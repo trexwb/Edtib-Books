@@ -167,7 +167,9 @@ impl Default for HttpClient {
     }
 }
 
-/// 仅允许 http / https 协议（避免前端传入 file:// 等本地协议造成越权读取）
+/// 仅允许 http / https 协议（避免前端传入 file:// 等本地协议造成越权读取），
+/// 并拦截链路本地 / 云厂商元数据地址（SSRF 面收敛）。
+/// 回环地址仍允许：开发态网关即为 127.0.0.1:9000。
 pub fn normalize_url(url: &str) -> AppResult<String> {
     let trimmed = url.trim();
     if trimmed.is_empty() {
@@ -179,7 +181,51 @@ pub fn normalize_url(url: &str) -> AppResult<String> {
             "仅支持 http/https 请求地址：{trimmed}"
         )));
     }
+    if let Some(host) = host_of(trimmed) {
+        if is_blocked_host(&host) {
+            return Err(AppError::bad_request(format!(
+                "禁止访问的地址（链路本地 / 元数据服务）：{host}"
+            )));
+        }
+    }
     Ok(trimmed.to_string())
+}
+
+/// 取 URL 的 host（去掉 scheme、端口与 userinfo）
+fn host_of(url: &str) -> Option<String> {
+    let rest = url.split_once("://").map(|(_, rest)| rest)?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let without_userinfo = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
+    // IPv6 字面量形如 [::1]:9000
+    let host = if let Some(stripped) = without_userinfo.strip_prefix('[') {
+        stripped.split(']').next().unwrap_or_default()
+    } else {
+        without_userinfo.split(':').next().unwrap_or(without_userinfo)
+    };
+    (!host.is_empty()).then(|| host.to_lowercase())
+}
+
+fn is_blocked_host(host: &str) -> bool {
+    if matches!(
+        host,
+        "metadata" | "metadata.google.internal" | "instance-data" | "alibaba-intl-metadata"
+    ) {
+        return true;
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        // 169.254.0.0/16（含各云厂商 169.254.169.254）、阿里云 100.100.100.200、未指定地址
+        return match ip {
+            std::net::IpAddr::V4(v4) => {
+                let [a, b, ..] = v4.octets();
+                v4.is_unspecified() || (a == 169 && b == 254) || v4 == std::net::Ipv4Addr::new(100, 100, 100, 200)
+            }
+            // IPv6 链路本地前缀 fe80::/10（is_unicast_link_local 仍为 unstable，这里手工判定）
+            std::net::IpAddr::V6(v6) => {
+                v6.is_unspecified() || (v6.segments()[0] & 0xffc0) == 0xfe80
+            }
+        };
+    }
+    false
 }
 
 /// 判断字符串是否为远端地址（用于 `cache_file` 区分「下载 URL」与「本地文件路径」）

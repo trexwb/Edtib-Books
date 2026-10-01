@@ -67,17 +67,33 @@ const call = <T>(command: string, payload?: Record<string, any>): Promise<T> => 
   return payload === undefined ? invoke<T>(command) : invoke<T>(command, payload)
 }
 
-/** 更新事件监听注册表（占位阶段先登记，Rust 侧 emit 后由 Tauri 事件回调触发） */
-const updateListeners: Array<{ event: string; callback: (event: unknown, payload: any) => void }> = []
+/** 更新事件监听注册表（登记 entry 以便注销，避免重复注册导致同一回调多次触发） */
+interface UpdateListenerEntry {
+  event: string
+  callback: (event: unknown, payload: any) => void
+  unlisten?: () => void
+}
+const updateListeners: UpdateListenerEntry[] = []
 
-const registerUpdateListener = (event: string, callback: (event: unknown, payload: any) => void) => {
-  if (typeof callback !== 'function') return
-  updateListeners.push({ event, callback })
-  if (!isTauri()) return
-  // Tauri 环境下同时挂到事件总线：Rust 侧按 BRIDGE_EVENTS 定义 emit 即生效
-  void listen(event, (tauriEvent) => callback(tauriEvent, (tauriEvent as any)?.payload)).catch((error) => {
-    warnNotImplemented(event, error)
-  })
+const registerUpdateListener = (event: string, callback: (event: unknown, payload: any) => void): (() => void) => {
+  if (typeof callback !== 'function') return () => {}
+  const entry: UpdateListenerEntry = { callback, event }
+  updateListeners.push(entry)
+  if (isTauri()) {
+    // Tauri 环境下同时挂到事件总线：Rust 侧按 BRIDGE_EVENTS 定义 emit 即生效
+    void listen(event, (tauriEvent) => callback(tauriEvent, (tauriEvent as any)?.payload))
+      .then((unlisten) => {
+        entry.unlisten = unlisten
+      })
+      .catch((error) => {
+        warnNotImplemented(event, error)
+      })
+  }
+  return () => {
+    const index = updateListeners.indexOf(entry)
+    if (index !== -1) updateListeners.splice(index, 1)
+    entry.unlisten?.()
+  }
 }
 
 /**
@@ -127,6 +143,11 @@ export const bridge: ElectronAPI = {
       // 占位：Rust 侧 updater 未接入前静默降级，避免点击检查更新即报错
       warnNotImplemented(BRIDGE_CHANNELS.app.checkUpdate, error)
     }
+  },
+  confirmUpdate: async (): Promise<void> => {
+    // [迁移补全] Rust 侧 confirm_update 已注册（lib.rs），负责安装 check_update 已下载的包；
+    // 此前桥接层未暴露该方法，更新包下载完成后永远无法安装。
+    await call(BRIDGE_CHANNELS.app.confirmUpdate)
   },
   restartApp: (): void => {
     // 接口签名为同步（沿用 Electron 版），内部异步触发

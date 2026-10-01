@@ -27,6 +27,7 @@ pub const TABLES: &[&str] = &[
     "docs_logs",
     "downloads_logs",
     "serials",
+    "products_filter",
 ];
 
 /// 建表语句（幂等，可重复执行）
@@ -302,6 +303,22 @@ CREATE TABLE IF NOT EXISTS "serials" (
   "updated_at" DATETIME,
   "deleted_at" TEXT
 );
+CREATE TABLE IF NOT EXISTS "products_filter" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "product_type" INTEGER DEFAULT 0,
+  "product_id" INTEGER,
+  "category_id" INTEGER,
+  "shape_id" INTEGER,
+  "standard_id" INTEGER,
+  "extension" TEXT,
+  "sort" INTEGER DEFAULT 0,
+  "updated_at" DATETIME,
+  "created_at" DATETIME
+);
+CREATE INDEX IF NOT EXISTS "idx_products_filter_product" ON "products_filter" ("product_type", "product_id");
+CREATE INDEX IF NOT EXISTS "idx_products_filter_category" ON "products_filter" ("product_type", "category_id");
+CREATE INDEX IF NOT EXISTS "idx_products_filter_shape" ON "products_filter" ("product_type", "shape_id");
+CREATE INDEX IF NOT EXISTS "idx_products_filter_standard" ON "products_filter" ("product_type", "standard_id");
 "#;
 
 /// 每张表的列清单（供自检 / 调试使用）
@@ -328,4 +345,5 @@ pub const TABLE_COLUMNS: &[(&str, &[&str])] = &[
     ("docs_logs", &["id", "doc_id", "uuid", "name", "product", "keywords", "extension", "created_at", "updated_at"]),
     ("downloads_logs", &["id", "doc_id", "uuid", "name", "product", "keywords", "extension", "created_at", "updated_at"]),
     ("serials", &["id", "batch", "code", "secret", "type", "level", "days", "credit", "price", "remark", "extension", "times_expire", "uuid", "status", "created_at", "updated_at", "deleted_at"]),
+    ("products_filter", &["id", "product_type", "product_id", "category_id", "shape_id", "standard_id", "extension", "sort", "created_at", "updated_at"]),
 ];

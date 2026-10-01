@@ -172,40 +172,54 @@ fn field_params(model: &ModelDef, fields: &Map<String, Value>, crypt: &FieldCryp
 }
 
 /// 插入（单条或多条），返回主键数组（与老实现 knex insert 返回一致）
+///
+/// [数据一致性] 多条写入整体包在一个事务里：任一行失败即整体回滚，
+/// 避免批量同步中途失败后残留半截数据（老实现由 knex 事务承担）。
 pub fn insert_rows(
     conn: &Connection,
     model: &ModelDef,
     rows: &[Value],
     crypt: &FieldCrypt,
 ) -> AppResult<Value> {
-    let mut keys: Vec<Value> = Vec::new();
-    for data in rows {
-        let mut fields = collect_write_fields(model, data, WriteMode::Create)?;
-        inject_timestamps(model, &mut fields, WriteMode::Create);
-        if fields.is_empty() {
-            return Err(AppError::bad_request("没有可写入的字段"));
-        }
-        let columns: Vec<String> = fields
-            .keys()
-            .map(|key| quote_ident(key))
-            .collect::<AppResult<Vec<_>>>()?;
-        let sql = format!(
-            "INSERT INTO {} ({}) VALUES ({})",
-            quote_ident(model.table)?,
-            columns.join(", "),
-            placeholders(fields.len())
-        );
-        let params = field_params(model, &fields, crypt);
-        conn.execute(&sql, params_from_iter(params.iter()))?;
-
-        let key = fields
-            .get(model.primary_key)
-            .cloned()
-            .filter(|value| !value.is_null())
-            .unwrap_or_else(|| Value::Number(conn.last_insert_rowid().into()));
-        keys.push(key);
+    if rows.len() > 1 {
+        let tx = conn.unchecked_transaction()?;
+        let keys = rows
+            .iter()
+            .map(|data| insert_one(&tx, model, data, crypt))
+            .collect::<AppResult<Vec<Value>>>()?;
+        tx.commit()?;
+        return Ok(Value::Array(keys));
     }
-    Ok(Value::Array(keys))
+    Ok(Value::Array(
+        rows
+            .iter()
+            .map(|data| insert_one(conn, model, data, crypt))
+            .collect::<AppResult<Vec<Value>>>()?,
+    ))
+}
+
+/// 单行插入，返回该行主键值
+fn insert_one(conn: &Connection, model: &ModelDef, data: &Value, crypt: &FieldCrypt) -> AppResult<Value> {
+    let mut fields = collect_write_fields(model, data, WriteMode::Create)?;
+    inject_timestamps(model, &mut fields, WriteMode::Create);
+    if fields.is_empty() {
+        return Err(AppError::bad_request("没有可写入的字段"));
+    }
+    let columns: Vec<String> = fields.keys().map(|key| quote_ident(key)).collect::<AppResult<Vec<_>>>()?;
+    let sql = format!(
+        "INSERT INTO {} ({}) VALUES ({})",
+        quote_ident(model.table)?,
+        columns.join(", "),
+        placeholders(fields.len())
+    );
+    let params = field_params(model, &fields, crypt);
+    conn.execute(&sql, params_from_iter(params.iter()))?;
+
+    Ok(fields
+        .get(model.primary_key)
+        .cloned()
+        .filter(|value| !value.is_null())
+        .unwrap_or_else(|| Value::Number(conn.last_insert_rowid().into())))
 }
 
 /// 更新（返回受影响行数）

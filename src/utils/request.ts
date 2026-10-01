@@ -5,7 +5,7 @@ import router from '/@/router'
 import { useUserStore } from '/@/store/modules/user'
 import { isArray } from '/@/utils/validate'
 // [P0-2 迁移修复] Tauri 环境统一经 Rust http_request 发起（生产包无 dev server 代理）
-import { isTauriRuntime, tauriHttpRequest } from '/@/utils/tauriHttp'
+import { computeXSign, isTauriRuntime, tauriHttpRequest } from '/@/utils/tauriHttp'
 import { addErrorLog, needErrorLog } from '/@vab/plugins/errorLog'
 import { gp } from '/@vab/plugins/vab'
 
@@ -139,15 +139,26 @@ const requestConf = (config: any): any => {
     // config.headers['Auth-Token'] = `${token}`
   }
 
-  if (import.meta.env.VITE_REQUEST_ENCRYPT === 'true' && config.data) {
-    // [P2-5 契约对齐] 随机 IV 前缀格式，见 encrypt 注释；VITE_APP_IV 不再参与请求加密
-    config.data = {
-      encryptedData: encrypt(config.data, import.meta.env.VITE_APP_SECRET),
+  const isForm = Boolean(config.data) && config.headers['Content-Type'] === 'application/x-www-form-urlencoded;charset=UTF-8'
+  // [P1-7 契约对齐] 首次进入拦截器时冻结「网关 verifySignature 实际看到的 body 结构」：
+  // 加密场景为 { encryptedData }，表单场景为序列化前的键值对象。
+  // 重试时复用该结构，既避免对已加密 body 的二次加密，也避免签名漂移。
+  if (config.signedBody === undefined) {
+    const plainBody = config.data
+    if (import.meta.env.VITE_REQUEST_ENCRYPT === 'true' && config.data) {
+      // [P2-5 契约对齐] 随机 IV 前缀格式，见 encrypt 注释；VITE_APP_IV 不再参与请求加密
+      config.data = {
+        encryptedData: encrypt(config.data, import.meta.env.VITE_APP_SECRET),
+      }
     }
+    config.signedBody = isForm ? plainBody : (config.data ?? {})
   }
+  if (isForm && typeof config.data !== 'string') config.data = stringify(config.data)
 
-  if (config.data && config.headers['Content-Type'] === 'application/x-www-form-urlencoded;charset=UTF-8')
-    config.data = stringify(config.data)
+  // [P1-7] 网关 VERIFY_SIGNATURE=true 时所有 /api/** 请求（含 GET、含 dev 浏览器路径）都必须带 X-Sign，
+  // 与 Tauri 路径（tauriHttp.ts#computeXSign）使用同一算法与同一签名对象。
+  config.headers['X-Sign'] = computeXSign({ ...(config.params || {}), ...config.signedBody }, import.meta.env.VITE_APP_SECRET)
+
   if (debounce.some((item: string) => config.url.includes(item))) loadingInstance = gp.$baseLoading()
 
   return config
@@ -211,7 +222,9 @@ const handleData = async ({
           router.push({ path: '/login', replace: true }).then(() => {})
         })
       }
-      return
+      // [P2-6] 令牌失效统一 reject（与下方异常分支同语义）：
+      // 原 return undefined 会让 store 里 `const { data: {...} } = await xxx()` 抛出与业务无关的 TypeError。
+      return Promise.reject(data || { [statusName]: code, [messageName]: '登录已过期' })
     case 403:
       // return await setSiteConfig(config)
       // router.push({ path: '/403' }).then(() => {})
@@ -249,13 +262,29 @@ const instance = axios.create({
 const tauriRequest = async (config: any): Promise<any> => {
   // 模拟 requestConf 中被 handleData 消费的字段
   const merged = { retryCount: 0, ...config }
-  const response = await tauriHttpRequest({
-    url: merged.url,
-    method: merged.method,
-    data: merged.data,
-    params: merged.params,
-    headers: merged.headers,
-  })
+  const { token } = useUserStore()
+  let response: any
+  try {
+    response = await tauriHttpRequest({
+      url: merged.url,
+      method: merged.method,
+      data: merged.data,
+      params: merged.params,
+      // [P0-2 补全] tauriRequest 不经 axios 请求拦截器，Bearer 头必须在此显式注入，
+      // 否则 Tauri 生产包所有需鉴权的接口一律 401（requestConf 只在浏览器路径生效）。
+      headers: { ...(merged.headers || {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    })
+  } catch (error) {
+    // invoke 失败即 Rust 侧网络层错误，对应 axios 路径的 response === undefined 分支；
+    // 不兜底会把裸 AppError 直接抛给业务层，既不提示用户也丢失 loading 关闭时机。
+    if (loadingInstance) loadingInstance.close()
+    gp.$baseMessage(
+      '连接后台接口失败，可能由以下原因造成：后端服务未启动、接口地址不存在、请求超时等，请联系管理员排查后端接口问题 ',
+      'error',
+      'hey'
+    )
+    return Promise.reject(error)
+  }
   return handleData(response)
 }
 
@@ -287,9 +316,8 @@ instance.interceptors.response.use(
     // 网络错误时重试一次（仅在无响应时，即真正的网络问题）
     if (response === undefined && config?.retryCount < 1) {
       config.retryCount++
-      // 深拷贝 data 避免请求拦截器副作用影响重试
-      if (config.data) config.data = JSON.parse(JSON.stringify(config.data))
-      return instance(requestConf(config))
+      // [P1-7] 只交给实例重跑一次拦截器：此前手动调用 requestConf 会让加密/序列化被执行两遍
+      return instance(config)
     }
     if (response === undefined) {
       if (loadingInstance) loadingInstance.close()

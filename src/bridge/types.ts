@@ -9,11 +9,23 @@
  * @Author: trexwb
  */
 
-/** 更新信息（沿用 Electron 版结构，Tauri updater 后续按同一结构映射） */
+/** 更新信息（字段与 Rust update.rs::UpdateInfo::to_json 对齐） */
 export interface UpdateInfo {
   version: string
-  releaseDate?: string
+  /** [迁移新增] 当前运行版本 */
+  currentVersion?: string
+  /** [迁移新增] 发布日期，Rust 侧字段名为 date */
+  date?: string
   releaseNotes?: string
+  /** [迁移新增] 更新目标（platform_arch，如 darwin_aarch64） */
+  target?: string
+}
+
+/** 下载进度载荷（与 Rust EVENT_DOWNLOAD_PROGRESS 的 emit 结构对齐，Rust 发对象而非裸数字） */
+export interface DownloadProgress {
+  percent: number
+  transferred: number
+  total: number | null
 }
 
 /** 系统信息 */
@@ -40,12 +52,15 @@ export interface ElectronAPI {
   // === 版本与更新 API ===
   getAppVersion: () => Promise<string>
   checkUpdate: () => Promise<void>
+  /** [迁移补全] 安装已下载的更新包（对应 Rust confirm_update）；老 Electron 由 quitAndInstall 承担 */
+  confirmUpdate: () => Promise<void>
   restartApp: () => void
   // 注意：以下事件回调均源自 ipcRenderer.on，首个参数为 IpcRendererEvent
-  onUpdateAvailable: (callback: (event: unknown, info: UpdateInfo) => void) => void
-  onUpdateNotAvailable: (callback: (event: unknown, info: UpdateInfo) => void) => void
-  onDownloadProgress: (callback: (event: unknown, percent: number) => void) => void
-  onUpdateDownloaded: (callback: (event: unknown, info: UpdateInfo) => void) => void
+  // 返回值 [迁移调整] 为注销函数，组件卸载时调用，避免重复注册导致回调多次触发
+  onUpdateAvailable: (callback: (event: unknown, info: UpdateInfo) => void) => () => void
+  onUpdateNotAvailable: (callback: (event: unknown, info: UpdateInfo) => void) => () => void
+  onDownloadProgress: (callback: (event: unknown, payload: DownloadProgress) => void) => () => void
+  onUpdateDownloaded: (callback: (event: unknown, info: UpdateInfo) => void) => () => void
   cacheFile: (filePath: string) => Promise<string>
 
   // === 数据库操作 API ===

@@ -27,8 +27,16 @@ export const createVitePlugin = (env: Record<string, string>) => {
   const isEmpty = (value: any) => {
     return value == undefined || value == '' || value == null
   }
-  if (isEmpty(userName) || isEmpty(secretKey)) return
-  if (nodeEnv !== 'development') if (isEmpty(userName) || isEmpty(secretKey)) return
+  // 迁移说明：老项目在此处对缺失授权码（VITE_APP_GITHUB_USER_NAME / VITE_APP_SECRET_KEY）
+  // 的工程直接 `return`（返回 undefined），导致连 vue 插件本身都不注册、构建直接崩溃。
+  // Tauri 迁移后改为「插件链始终按完整模式注册」，仅在缺失授权码时打印提示；
+  // 运行期的授权校验逻辑保持与老项目一致，未作改动。
+  if (isEmpty(userName) || isEmpty(secretKey)) {
+    console.warn(
+      `\n${pc.yellow('[edtib-books]')} 未检测到 ${viteApp}GITHUB_USER_NAME / ${viteApp}SECRET_KEY（由 .env 与 .env.local 提供），已按完整插件链注册，跳过授权码校验提示。\n`
+    )
+  }
+  if (nodeEnv !== 'development') if (isEmpty(userName) || isEmpty(secretKey)) console.warn(`\n${pc.yellow('[edtib-books]')} 生产环境缺少授权码，如为正式发布请补齐 .env.local。\n`)
   vitePlugins.push(vueJsx())
   vitePlugins.push(createProgress(env) as any)
   vitePlugins.push(createUnPlugin(env))

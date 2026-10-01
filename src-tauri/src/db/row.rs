@@ -402,7 +402,10 @@ mod tests {
         let crypt = FieldCrypt::from_secret(None, None);
         assert_eq!(
             cast_set(CastKind::Integer, &Value::String("12.7".into()), &crypt),
-            Value::Number(12.7f64.into())
+            // serde_json::Number 不实现 From<f64>（f64 可能为 NaN/Inf），须走 from_f64
+            serde_json::Number::from_f64(12.7)
+                .map(Value::Number)
+                .expect("12.7 应为合法 JSON 数值")
         );
         assert_eq!(
             cast_set(CastKind::Integer, &Value::String("abc".into()), &crypt),

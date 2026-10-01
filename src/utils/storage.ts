@@ -17,7 +17,9 @@ const prefix = 'book'
  */
 export const getStorage = (key: string) => {
   const value: any = localStorage.getItem(`${prefix}_${key}`)
-  if (value || isJson(value)) {
+  // 仅当确实拿到值且值为合法 JSON 时才反序列化；
+  // 原 `value || isJson(value)` 对任意非空字符串都会 JSON.parse，直接抛 SyntaxError
+  if (value && isJson(value)) {
     return JSON.parse(value)
   } else {
     return value

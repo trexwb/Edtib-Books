@@ -63,7 +63,7 @@ const sortObjectDeep = (value: any): any => {
 }
 
 /** X-Sign：md5( sha256(JSON.stringify(排序后参数)) + appKey ) */
-const computeXSign = (params: Record<string, any>, appKey: string): string => {
+export const computeXSign = (params: Record<string, any>, appKey: string): string => {
   const sorted = sortObjectDeep(params ?? {})
   return md5(sha256(JSON.stringify(sorted)) + appKey)
 }
@@ -106,21 +106,24 @@ export const tauriHttpRequest = async (config: TauriHttpRequestConfig): Promise<
   headers['App-Secret'] = md5(`${sha256(`${appId}${timeStamp}${nonce}`)}${appSecret}`) + timeStamp
 
   // 2) 请求体：加密（随机 IV 前缀）或表单序列化，得到「最终 body」
-  let finalBody: Record<string, any> | undefined
+  // Rust 侧（http.rs）对字符串按原文发送、对对象按 application/json 序列化，
+  // 因此表单场景必须在此序列化为 urlencoded 字符串，否则实发 JSON 与声明的 Content-Type 不符。
+  let finalBody: Record<string, any> | string | undefined
   if (config.data !== undefined) {
     if (requestEncrypt && config.data) {
       finalBody = { encryptedData: encrypt(config.data, appSecret) }
     } else if (headers['Content-Type'] === 'application/x-www-form-urlencoded;charset=UTF-8') {
-      // 表单场景：网关侧 body 是序列化字符串，签名按服务端看到的 {key:value} 结构
-      finalBody = config.data
-      headers['Content-Type'] = 'application/x-www-form-urlencoded;charset=UTF-8'
+      // 表单场景：网关侧 body 是序列化字符串，签名按服务端解析后的 {key:value} 结构
+      finalBody = typeof config.data === 'string' ? config.data : stringify(config.data)
     } else {
       finalBody = config.data
     }
   }
 
   // 3) X-Sign（VerifySignature：对 { ...query, ...最终 body } 签名，必填）
-  const signParams: Record<string, any> = { ...(config.params || {}), ...(finalBody || {}) }
+  // 表单场景签名对象是序列化前的键值对象（Express urlencoded 解析后即该结构）
+  const signSource: Record<string, any> = typeof finalBody === 'string' ? (config.data ?? {}) : (finalBody ?? {})
+  const signParams: Record<string, any> = { ...(config.params || {}), ...signSource }
   headers['X-Sign'] = computeXSign(signParams, appSecret)
 
   // 4) URL / 查询串

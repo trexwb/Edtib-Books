@@ -73,13 +73,30 @@ pub fn load_or_create(data_dir: &Path) -> AppResult<DbKey> {
     // 2) macOS Keychain
     #[cfg(target_os = "macos")]
     {
-        if let Some(hex) = keychain_read() {
-            if is_valid_hex_key(&hex) {
+        match keychain_probe() {
+            KeychainEntry::Found(hex) => {
                 return Ok(DbKey {
                     hex: hex.to_lowercase(),
                     source: KeySource::Keychain,
-                });
+                })
             }
+            // [数据安全] Keychain 中已有记录但内容非法：绝不带 -U 覆盖重写，
+            // 否则既有 SQLCipher 库将永久无法解密。先尝试同目录密钥文件（迁移遗留），
+            // 仍不可用则显式报错，交由人工处理。
+            KeychainEntry::Corrupted(raw) => {
+                let detail = if raw.is_empty() { "（空值）".to_string() } else { "（长度或字符集不符合 64 位十六进制）".to_string() };
+                eprintln!("[keychain] Keychain 记录非法{detail}，service={KEYCHAIN_SERVICE}, account={KEYCHAIN_ACCOUNT}");
+                if let Some(hex) = key_file_read_existing(data_dir) {
+                    return Ok(DbKey {
+                        hex,
+                        source: KeySource::KeyFile,
+                    });
+                }
+                return Err(AppError::internal(format!(
+                    "Keychain 中的数据库密钥记录非法{detail}，且未找到可用的密钥文件；为避免覆盖后既有加密库永久无法解密，已停止初始化，请人工确认后处理"
+                )));
+            }
+            KeychainEntry::Absent => {}
         }
         let generated = generate_hex();
         match keychain_write(&generated) {
@@ -125,6 +142,10 @@ fn key_file_load_or_create(data_dir: &Path, fresh: String) -> AppResult<DbKey> {
                 source: KeySource::KeyFile,
             });
         }
+        // [数据安全] 文件存在但内容非法时不覆盖重写，避免既有加密库永久失读
+        return Err(AppError::internal(
+            "密钥文件 .sqlcipher-key 已存在但内容非法（需 64 位十六进制字符）；为避免覆盖后既有加密库无法解密，已停止初始化，请人工确认后处理",
+        ));
     }
     crate::paths::ensure_dir(data_dir)?;
     std::fs::write(&file, &fresh)?;
@@ -133,6 +154,14 @@ fn key_file_load_or_create(data_dir: &Path, fresh: String) -> AppResult<DbKey> {
         hex: fresh,
         source: KeySource::Generated,
     })
+}
+
+/// 只读取既有密钥文件（内容合法才返回），不创建、不覆盖
+#[cfg(target_os = "macos")]
+fn key_file_read_existing(data_dir: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(data_dir.join(KEY_FILE_NAME)).ok()?;
+    let content = content.trim().to_string();
+    is_valid_hex_key(&content).then(|| content.to_lowercase())
 }
 
 #[cfg(unix)]
@@ -144,9 +173,17 @@ fn restrict_permissions(path: &Path) {
 #[cfg(not(unix))]
 fn restrict_permissions(_path: &Path) {}
 
+/// Keychain 记录状态（区分「不存在」与「存在但非法」，后者不可覆盖）
 #[cfg(target_os = "macos")]
-fn keychain_read() -> Option<String> {
-    let output = Command::new("security")
+enum KeychainEntry {
+    Absent,
+    Found(String),
+    Corrupted(String),
+}
+
+#[cfg(target_os = "macos")]
+fn keychain_probe() -> KeychainEntry {
+    let output = match Command::new("security")
         .args([
             "find-generic-password",
             "-s",
@@ -156,15 +193,22 @@ fn keychain_read() -> Option<String> {
             "-w",
         ])
         .output()
-        .ok()?;
+    {
+        Ok(output) => output,
+        Err(_) => return KeychainEntry::Absent,
+    };
     if !output.status.success() {
-        return None;
+        // security 以非 0 退出码表示「无该记录」
+        return KeychainEntry::Absent;
     }
     let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if value.is_empty() {
-        None
+        return KeychainEntry::Corrupted(String::new());
+    }
+    if is_valid_hex_key(&value) {
+        KeychainEntry::Found(value)
     } else {
-        Some(value)
+        KeychainEntry::Corrupted(value)
     }
 }
 
