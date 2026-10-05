@@ -20,9 +20,12 @@ export const setToken = (token: string) => {
 }
 
 /**
- * @description 移除token
+ * @description 移除token（P2-2 修复：默认读统一 storage 配置，原硬编码 'localStorage'
+ *               遮蔽了模块顶部的 storage 变量，切 sessionStorage 时将清不掉 token；
+ *               sessionStorage 分支只移除 token 键，不再 clear() 整个存储）
  */
-export const removeToken = (storage = 'localStorage') => {
-  if ('localStorage' === storage) return localStorage.removeItem(tokenTableName)
-  else if ('sessionStorage' === storage) return sessionStorage.clear()
+export const removeToken = (storageOverride?: string) => {
+  const target = storageOverride || storage
+  if ('localStorage' === target) return localStorage.removeItem(tokenTableName)
+  else if ('sessionStorage' === target) return sessionStorage.removeItem(tokenTableName)
 }

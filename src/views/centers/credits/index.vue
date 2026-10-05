@@ -222,15 +222,14 @@ const fetchBalance = async () => {
 const fetchTransactions = async () => {
   listLoading.value = true
   try {
-    const { data }: any = await creditsTransactions({ page: queryForm.page, pageSize: queryForm.pageSize })
+    // P1-6 修复：页签过滤条件下发服务端（direction），total 为服务端同条件计数，
+    // 原「当前页客户端 filter + filtered.length 作 total」导致分页缺失与数据看不全
+    const tab = TabsActiveName.value
+    const direction = tab === 'obtain' || tab === 'consume' ? tab : undefined
+    const { data }: any = await creditsTransactions({ page: queryForm.page, pageSize: queryForm.pageSize, direction })
     const list = Array.isArray(data?.list) ? data.list : []
-    const filtered = list.filter((item: any) => {
-      if (TabsActiveName.value === 'obtain') return Number(item?.delta ?? 0) >= 0
-      if (TabsActiveName.value === 'consume') return Number(item?.delta ?? 0) < 0
-      return true
-    })
-    rows.list = filtered
-    rows.total = TabsActiveName.value === 'all' ? Number(data?.total ?? filtered.length) : filtered.length
+    rows.list = list
+    rows.total = Number(data?.total ?? list.length)
   } catch (error) {
     console.error('[centersCredits] 积分流水加载失败:', error)
     rows.list = []

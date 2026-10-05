@@ -46,9 +46,13 @@ export function setupPermissions(router: Router) {
           // 根据路由模式获取路由并根据权限过滤
           await setRoutes(authentication)
           next({ ...to, replace: true })
-        } catch (err) {
+        } catch (err: any) {
           console.error('错误拦截:', err)
-          await resetAll()
+          // P1-5 修复：仅 token 无效（401/402 业务码）才清除登录态重置路由；
+          // 网络抖动/后端不可达等瞬时故障保留 token，不清凭据，仅送回登录页等待重试
+          const bizCode = Number(err?.code ?? NaN)
+          const isAuthError = bizCode === 401 || bizCode === 402
+          if (isAuthError) await resetAll()
           next(toLoginRoute(to.path))
         }
       }

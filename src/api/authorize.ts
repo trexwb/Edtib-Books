@@ -176,7 +176,9 @@ export async function usersSave(data: {
     })
     if (cached) {
       const cacheData = JSON.parse(cached)
-      cacheData.user = { ...cacheData.user, ...data }
+      // P2-4 修复：口令哈希不落盘（敏感信息驻留），缓存仅同步非敏感资料字段
+      const { password: _omitPassword, ...safeData } = data as Record<string, unknown>
+      cacheData.user = { ...cacheData.user, ...safeData }
       await requestBridge.writeFile({
         ipc: { filePath: 'user/login-cache.json', data: JSON.stringify(cacheData) },
       })

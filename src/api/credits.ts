@@ -66,7 +66,7 @@ export async function creditsPurchase(data: { package_id: number; channel?: numb
  * HTTP: /front/credits/transactions
  * @returns { list, total, page, pageSize }
  */
-export async function creditsTransactions(data: { page?: number; pageSize?: number } = {}) {
+export async function creditsTransactions(data: { page?: number; pageSize?: number; direction?: 'obtain' | 'consume' } = {}) {
   const result = await requestBridge.create({
     http: {
       url: '/front/credits/transactions',

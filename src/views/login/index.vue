@@ -256,7 +256,7 @@ const form = ref<any>(
   Object.assign(
     {
       username: loginFormData['username'] || (process.env.NODE_ENV === 'development' ? 'wangbin@edtib.com' : ''),
-      password: process.env.NODE_ENV === 'development' ? 'WxzLyR3PPRFvPm8f' : '',
+      password: '',
       uuid: '',
       secret: '',
       verificationCode: '',
@@ -412,7 +412,7 @@ const handleLogin = async () => {
               })
               .catch((error: any) => {
                 // $baseMessage(error.toString(), 'error', 'hey')
-                form.value.password = process.env.NODE_ENV === 'development' ? 'WxzLyR3PPRFvPm8f' : ''
+                form.value.password = ''
                 loading.value = false
               })
           }
