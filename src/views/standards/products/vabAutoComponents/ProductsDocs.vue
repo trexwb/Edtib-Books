@@ -71,6 +71,7 @@ import { useTabsStore } from '/@/store/modules/tabs'
 import { ElMessageBox, ElButton } from 'element-plus'
 import VabPdf from '/@/plugins/VabPdf'
 import { docsDownload, docsDetail } from '/@/api/products'
+import { translate } from '/@/i18n'
 import { useUserStore } from '/@/store/modules/user'
 const userStore = useUserStore()
 const { credit } = storeToRefs(userStore)
@@ -255,9 +256,14 @@ const buyPdf = async () => {
       pdfDetailForm.value.download = data || null
       state.numPages = state.maxPage
       state.pageNum += 1
+      $baseMessage(translate('购买成功'), 'success', 'hey')
+    } else {
+      // 扣费接口未返回下载地址（如缓存/契约异常），必须显式提示，否则用户以为已购成功
+      $baseMessage(translate('购买失败，请稍后重试'), 'error', 'hey')
     }
   } catch (error) {
     console.error('There was an error downloading the file!', error)
+    // 业务/网络错误已由 request 拦截器统一弹错，此处不再重复提示
   }
 }
 
@@ -277,24 +283,38 @@ const downloadPdf = async () => {
     // 快速下载
     // pdfRef.value?.download(fileName)
 
-    // 使用 fetch 请求 PDF 文件内容并转换为 Blob
-    const response = await fetch(data.url)
-    if (!response.ok) {
-      throw new Error(`Failed to fetch PDF: ${response.statusText}`)
+    if (!data?.url) {
+      $baseMessage(translate('下载地址获取失败，请稍后重试'), 'error', 'hey')
+      return
     }
-    const blob = await response.blob()
-    // 创建一个临时 URL 指向 Blob 数据
-    const url = window.URL.createObjectURL(blob)
-    // 动态创建一个 HTML <a> 元素，用于触发下载
-    const link = document.createElement('a')
-    link.href = url
-    link.setAttribute('download', fileName)
-    // 将链接添加到 DOM 中，并触发点击事件
-    document.body.appendChild(link)
-    link.click()
-    // 清理：移除链接和释放临时 URL
-    document.body.removeChild(link)
-    window.URL.revokeObjectURL(url)
+    // 使用 fetch 请求 PDF 文件内容并转换为 Blob
+    // fetch 直连文件地址，绕过 request 拦截器，失败需在此就地提示
+    try {
+      const response = await fetch(data.url)
+      if (!response.ok) {
+        throw new Error(`Failed to fetch PDF: ${response.statusText}`)
+      }
+      const blob = await response.blob()
+      // 创建一个临时 URL 指向 Blob 数据
+      const url = window.URL.createObjectURL(blob)
+      // 动态创建一个 HTML <a> 元素，用于触发下载
+      const link = document.createElement('a')
+      link.href = url
+      link.setAttribute('download', fileName)
+      // 将链接添加到 DOM 中，并触发点击事件
+      document.body.appendChild(link)
+      link.click()
+      // 清理：移除链接和释放临时 URL
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+      $baseMessage(translate('下载成功'), 'success', 'hey')
+    } catch (fetchError) {
+      console.error('There was an error fetching the file!', fetchError)
+      $baseMessage(translate('下载失败，请稍后重试'), 'error', 'hey')
+    }
+  } catch (error) {
+    console.error('There was an error downloading the file!', error)
+    // docsDownload 业务/网络错误已由 request 拦截器统一弹错，此处不再重复提示
     // if (!data.url) {
     //   throw new Error('Invalid response: Missing file URL');
     // }
@@ -311,8 +331,6 @@ const downloadPdf = async () => {
     // link.click()
     // link.remove()
     // window.URL.revokeObjectURL(data.url); // 释放临时 URL
-  } catch (error) {
-    console.error('There was an error downloading the file!', error)
   }
 }
 

@@ -256,8 +256,9 @@ const cancel = () => {
 }
 // 确定
 const confirm = () => {
-  if (!code.value) {
-    $baseMessage('序列号不能为空', 'warning')
+  // 五段全空时 code 为 "----"，真值判断无法拦截，必须逐段校验
+  if (serialArr.value.some((part) => !String(part.value ?? '').trim())) {
+    $baseMessage('序列号 5 段均需填写', 'warning')
     return
   }
   serialsExchangeCoupons()
@@ -275,13 +276,14 @@ const serialsExchangeCoupons = async () => {
       item.disabled = true
     })
     serialArr.value[0].disabled = false
-    // fetchUsedData()
-    window.location.reload()
+    // 局部刷新替代整页 reload：刷新已用列表 + 重新拉取用户态（积分等），与 reload 重启后路由守卫的 getUserInfo 等效
+    await fetchUsedData()
+    await userStore.getUserInfo()
   } catch (error) {
     console.error('Fetch data error:', error)
-    // 可以加入错误处理逻辑，如显示错误信息
+    // 业务/网络错误已由 request 拦截器统一弹错（request.ts 异常分支），此处不再重复提示，避免双重提示
   } finally {
-    state.submit = true
+    state.submit = false
   }
 }
 // 粘贴
@@ -523,16 +525,20 @@ const fetchUsedData = async () => {
     const { data }: any = await serialsUse(queryForm)
     usedRows.list = data?.list || []
     usedRows.total = data?.total || 0
-    listLoading.value = false
-    emptyShow.value = data.total <= 0
+    emptyShow.value = usedRows.total <= 0
   } catch (error) {
     console.error('Fetch data error:', error)
-    // 可以加入错误处理逻辑，如显示错误信息
+  } finally {
+    listLoading.value = false
   }
 }
 const handleCurrentChange = (value: number) => {
   queryForm.page = value
-  // fetchUseData()
+  if (TabsActiveName.value === 'use') {
+    fetchUseData()
+  } else {
+    fetchUsedData()
+  }
 }
 onBeforeMount(() => {
   fetchUsedData()

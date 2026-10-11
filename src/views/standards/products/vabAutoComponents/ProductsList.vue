@@ -276,10 +276,11 @@ const fetchData = async () => {
     rows.total = data?.total || 0
     // 订阅状态由服务端下发（未订阅时服务端已按 free_tier=1 裁剪列表）；IPC 直连本地库无该字段，保持默认 true
     if (typeof data?.subscribed === 'boolean') subscribed.value = data.subscribed
-    state.loading = false
     showEmpty.value = rows.total > 0 ? false : true
   } catch (error) {
     console.error('Fetch data error:', error)
+  } finally {
+    state.loading = false
   }
 }
 

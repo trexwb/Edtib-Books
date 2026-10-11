@@ -211,6 +211,7 @@ import { Download, Tickets, View } from '@element-plus/icons-vue'
 import { downloadsLogs, docsHits } from '/@/api/download'
 import { docsDownload } from '/@/api/products'
 import { knowledgeList, knowledgeOwned, knowledgePurchase, knowledgeDownloadUrl } from '/@/api/knowledge'
+import { translate } from '/@/i18n'
 import { useUserStore } from '/@/store/modules/user'
 import { getStorage } from '/@/utils/storage'
 import { ElMessageBox } from 'element-plus'
@@ -461,8 +462,10 @@ const downloadKnowledge = async (row: any) => {
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
+    $baseMessage?.(translate('开始下载'), 'success', 'hey')
   } catch (error) {
     console.error('[centersDocs] 资料文档下载失败:', error)
+    // 业务/网络错误已由 request 拦截器统一弹错，此处不再重复提示
   }
 }
 

@@ -80,6 +80,7 @@ import { useAclStore } from '/@/store/modules/acl'
 import { Delete, Download, Plus, Search, Upload, Edit, View } from '@element-plus/icons-vue'
 import { downloadsLogs, docsHits } from '/@/api/download'
 import { docsList, docsDownload } from '/@/api/docs'
+import { translate } from '/@/i18n'
 import { getStorage, setStorage } from '/@/utils/storage'
 import { ElMessageBox } from 'element-plus'
 import { useUserStore } from '/@/store/modules/user'
@@ -188,8 +189,10 @@ const handleDownload = async (row: any = {}) => {
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
+    $baseMessage?.(translate('开始下载'), 'success', 'hey')
   } catch (error: any) {
     console.error('[standardsDocs] 资料文档下载失败:', error)
+    // 业务/网络错误已由 request 拦截器统一弹错；400400010002 积分不足需额外充值引导，保留页面级提示
     // 400400010002：积分余额不足，引导前往积分中心充值
     const code = Number(error?.code ?? error?.data?.code ?? 0)
     if (code === 400400010002) {

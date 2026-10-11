@@ -454,6 +454,7 @@ const handleSmsLogin = async () => {
       loginSms.reset()
       setStorage('color', themeConfig.color)
       userStore.afterLogin(data.auth_token, tokenName)
+      $baseMessage(translate('登录成功'), 'success', 'hey')
       await router.push(handleRoute())
       handleUnLock()
     } catch (error: any) {

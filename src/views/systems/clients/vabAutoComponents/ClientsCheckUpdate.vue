@@ -66,7 +66,13 @@ const checkUpdate = async () => {
   updateReady.value = false
   downloadProgress.value = 0
   // [迁移调整] IPC 调用统一走 src/bridge 桥接层（Tauri invoke）
-  await bridge.checkUpdate()
+  // invoke 直连 Rust 侧，绕过 request 拦截器的统一弹错，失败需就地提示并复位 loading，避免按钮永久 loading
+  try {
+    await bridge.checkUpdate()
+  } catch {
+    isCheckLoading.value = false
+    ElMessage({ message: '检查更新失败，请稍后重试', type: 'error' })
+  }
 }
 const installUpdate = async () => {
   installing.value = true

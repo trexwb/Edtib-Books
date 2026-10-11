@@ -154,7 +154,7 @@ const dataClean = async () => {
         })
     })
     .catch(() => {
-      // catch error
+      /* 取消关闭弹窗，或 cachesClear 失败（接口错误已由 request 拦截器统一弹错，不再重复提示） */
     })
     .finally(() => {
       state.submit = false
@@ -171,7 +171,7 @@ const checkLogout = async () => {
       await router.push(toLoginRoute(route.fullPath))
     })
     .catch(() => {
-      // catch error
+      /* 用户取消退出；logout 接口失败已由 request 拦截器统一弹错 */
     })
 }
 
