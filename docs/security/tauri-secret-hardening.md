@@ -4,10 +4,17 @@
 > 三条链路：`npm run dev`（.env.development 直连测试 API）｜`npm run tauri:dev`（.env.test 经 Tauri 本地 http）｜`npm run build`（.env.production 经 Tauri 本地 http）。
 > 硬约束：① 编入前端 bundle 或 Rust 二进制的常量一律视为已泄露，须给出攻击者成本与提取手法；② 每结论配命令/代码；③ 禁编造名，v1/v2 差异显式标注，不确定写【需确认：…】；④ 覆盖前端与 Rust 两侧。
 
-## 0 待确认项（CONTEXT 中 __ 缺失）
-1. **Tauri 版本**：确认为 v2？以下按 v2 写，v1 差异在文中显式标注（配置/权限/插件 API 不同）。
-2. **Rust 本地 http 实现**：`reqwest` 直连？还是 `tauri-plugin-http`？以下按 Rust command 内 `reqwest` 假设，【需确认：是否改用 tauri-plugin-http】。
-3. **密钥算法**：AES-256-GCM / AES-CBC / SM4 / ChaCha20？以下按 AES-256-GCM（AEAD）假设，【需确认：实际算法与分组/IV 长度】。
+## 0 实测口径（2026-10-12 以代码为准，此前的假设已在括号内更正）
+1. **Tauri 版本**：v2（`src-tauri/Cargo.toml:23` `tauri = { version = "2" }`），未使用 v1 兼容层。
+2. **Rust 本地 http 实现**：**应用内 `reqwest` 直连**，不是 `tauri-plugin-http`——出网只发生在
+   `src-tauri/src/proxy/request.rs`（console `reqwest` 0.13 + 显式 `rustls` 0.23/ring，books 0.12
+   `rustls-tls`）。渲染层没有 `http` 插件权限，也不允许直接出网。
+   【残留：两仓 reqwest 主版本不同，属框架同构待对齐项】
+3. **密钥算法**：**AES-256-CBC（PKCS7 填充）**，不是 AES-256-GCM——`aes = "0.8"` + `cbc = "0.1"`，
+   新写入为随机 IV 前置（`hex(iv‖cipher)`），固定 IV 仅用于读老数据（见 `crypt.rs`）。
+   签名侧为 `md5(sha256(appId+ts+nonce)+appSecret)+ts`（本地链路与出站链路同一族算法）。
+   因此本文 §3「IV 复用」缺陷的修正是 CBC 语境下的随机 IV，而非换 AEAD；CBC 无完整性校验，
+   密文可被位翻转攻击，这一残留风险在 §9 的方案决策里作为「不能只靠加密」的依据之一。
 
 ---
 
@@ -237,4 +244,106 @@ frida-trace -i "*getenv*" -i "*encrypt*" -f target/release/__
 - **【需确认：生产 `books.env`/`console.env` 分发机制】**：`tauri.conf.json` `bundle` 未配 `resources`，CI 仅注入签名私钥，该文件如何落到用户 AppData 不在本仓库，需确认（首启下载 / 独立配置步骤 / 手动分发）。
 - **`VITE_APP_SECRET` 内联进生产 bundle**：本地链路按设计需前端持有，但属文档 §2 前端泄漏向量；建议后续改由 Rust 运行时 `invoke` 下发，实现 L0-lite。
 - **内存零化**：secret 存 `OnceLock<String>` 静态，进程退出不零化，Frida 内存提取仍可行（§2）；`OnceLock` 不可变，零化需重构存储，低优先待决。
+
+### 8.4 加固轮落地（2026-10-12，console / books 双侧同构）
+
+本轮把「凭证不可绝对保密」这一前提转成**可验证的边界**：出网目标、请求头、本地文件、
+跨环境四个方向收口，并把检查做成可重复执行的命令。
+
+| 方向 | 落地 | 位置 |
+| --- | --- | --- |
+| 出网目标 | 配置地址优先、表内 `app_url` 仅兜底且必须同源；正式包只允许 `ALLOWED_GATEWAY_ORIGINS`；`path` 拼接禁止 authority 变形；跨主机重定向不跟随 | `proxy/request.rs::pin_origin/resolve_origin/join_target/client` |
+| 请求头 | 转发前剔除 `cookie/x-forwarded-*/x-real-ip/client-ip/sec-*/proxy-*/origin/referer/host` 等可伪造或可被网关当作决策输入的头；`authorization`（用户令牌）与业务头保留 | `proxy/request.rs::is_stripped_header` |
+| 本地文件 | `fs_read_file/fs_write_file/fs_delete_file` 一律拒绝 `.env`/`.db`/`.db-wal`/`.db-shm`/`.sqlcipher-key`（含父目录名判定），此前 `fs_read_file(<AppData>/console.env)` 可直接读出两套密钥 | `commands/fs.rs::ensure_not_protected` |
+| 跨环境 | 缺出站地址明确失败（删除内置兜底）；开发/测试构建默认拒绝正式网关（`EDTIB_ALLOW_PROD_EGRESS=1` 才放行）；`tauri:dev` 默认拒读 `.env.production`；本地链路密钥缺失/长度非法/与 `VITE_APP_*` 不一致时注入脚本 exit 1 | `config.rs` / `proxy/request.rs` / `scripts/with-tauri-env.mjs` |
+| 重放 | 本地链路时间戳增加上界（未来 60 s 之外拒绝），不再只有下界 | `proxy/middleware.rs::CLOCK_SKEW_SECS` |
+| 产物校验 | `npm run scan:dist`（Web 资源）+ `npm run scan:installer`（打包目录/二进制），命中 `TAURI_APP_*` 或非本环境链路密钥即 exit 1；已串到 `vite:build` / `build` 链尾 | `scripts/scan-*.mjs` + `package.json` |
+
+实测结论（本轮取证，命令与退出码为准）：
+- `npm run scan:dist`：console 265 文件 / books 160 文件，`TAURI_APP_*` 命中 **0**，
+  仅本地链路密钥按设计存在；`scan:installer` 对已展开的 `.app` 明文产物命中 **0**。
+- 扫描器自检：把 `.env.test` 的 `TAURI_APP_SECRET` 临时注入一份 `dist` 副本后重扫，
+  正确报 `FAIL 出站网关凭证` 并 exit 1（证明 0 命中不是"没在扫"）。
+- 已知盲区（未判定为安全）：`.dmg` 是压缩容器，明文扫描不穿透；Tauri 内嵌前端资源随二进制
+  分发，抽出的是压缩字节流——要证明"取不出"需挂载/解包后重扫，或按 §2 做运行时内存提取。
+  这两项在本轮**未执行**，因此只声称"未发现明文泄漏"，不声称"不可提取"。
+- 仓库侧：`.env* / console.env / books.env` 均在 `.gitignore`，`git ls-files` 未跟踪任何环境文件；
+  `books/.env.production` 与 `console/.env.production` 的 `TAURI_APP_ID/SECRET/IV` 已清空，
+  正式出站凭证不再以任何形式存在于工作副本里，只存在于发布机部署的密钥文件或 `secrets` 表。
+
+---
+
+## 9 差距清单与凭证方案决策（2026-10-12，结论均以代码为准）
+
+### 9.1 逐条对照目标行为的差距
+
+| # | 目标行为 | 现状 | 证据 |
+| --- | --- | --- | --- |
+| 1 | `npm run dev` 只吃 `.env.development`、直连测试 API、不碰 Tauri | 达标：`vite --mode development`；`isTauri()` 为假 ⇒ 保留 axios 默认 adapter，`/api` 经 vite 代理到 `gateway-dev` | `package.json` dev 脚本；`src/utils/request.ts:285`；`vite.config.ts:79-86` |
+| 2 | `npm run tauri:dev` 渲染层用 `.env.test` 的 `VITE_APP_*`，业务只走 Tauri | 达标：`beforeDevCommand = npm run dev:test`；Tauri 宿主下 adapter 换成 `invoke('proxy_request')`，`/api` 仅作路径前缀 | `tauri.conf.json:10`；`src/utils/tauriAdapter.ts:270` |
+| 3 | Rust 从「独立安全来源」读 `TAURI_APP_*` | 达标：进程环境变量 → `<AppData>/{console,books}.env`，源码无兜底；`with-tauri-env.mjs` 只注入 `TAURI_*/EDTIB_*/NODE_ENV` | `src-tauri/src/config.rs:138+`；`scripts/with-tauri-env.mjs` |
+| 4 | 测试态不得意外拿到正式凭证 / 打到正式网关 | 达标（本轮收口）：`.env.production` 的 `TAURI_APP_*` 已清空；dev 构建的出站地址是 dev 组（指纹与 `.env.development` 的 `VITE_APP_*` 同组）；`resolve_origin` 在 development 且未 `EDTIB_ALLOW_PROD_EGRESS=1` 时拒绝 `gateway.edtib.com`；`tauri:dev` 拒读 `.env.production` | `proxy/request.rs::resolve_origin`；`config.rs::PRODUCTION_GATEWAY_HOSTS` |
+| 5 | `npm run build` = 正式 Tauri 构建 + 凭证注入 | **口径不符，需注意**：`npm run build` = `vite:build`（Web 产物 + `scan:dist`）→ `tauri:build` → `make-dmg` → `scan:installer`。**全链不做任何凭证注入**——正式出站凭证只在运行期来自发布机的 `<AppData>/*.env` 或本地 `secrets` 表。CI 仅注入 updater 签名私钥 | `package.json` build/vite:build/tauri:build；`scripts/with-updater-key.mjs` |
+| 6 | 正式凭证不进 Web 产物 | 达标且有机器证据：`scan:dist` 对 265/160 个产物文件命中 0；注入已知密钥自检可 FAIL + exit 1 | `scripts/scan-dist-secret.mjs` |
+| 7 | 正式凭证不「无保护地写入客户端可读取的配置文件」 | **不达标（架构限制，非本仓可修）**：`<AppData>/console.env` 是明文 `KEY=VALUE`，任何本机可读文件者即得网关凭证；`db/seed.rs:77` 还会把它复制进本地 `secrets` 表（`app_secret/app_iv` 走 `Cast::Crypt`，未配置 `TAURI_FIELD_CRYPT_SECRET` 时明文透传，且默认密钥由 `TAURI_LINK_SECRET` 派生——同一份材料已在 bundle 里） | `config.rs::env_file_path`；`db/seed.rs:63-77`；`models/mod.rs:124`；`config.rs:153` |
+| 8 | 三种模式无静默跨环境回退 | 达标：缺出站地址明确报错；链路密钥缺失/长度非法/与 `VITE_APP_*` 不一致时注入脚本 exit 1；环境文件缺失时两个扫描器 exit 1；dev 打正式网关需显式开关 | `resolve_origin`；`with-tauri-env.mjs`；`scan-*.mjs:83-87` |
+
+### 9.2 方案对比（服务端能力已实测，非假设）
+
+**方案 A 服务端代理——服务端已具备该形态，但对本项目是"换一层"而非"新增能力"。**
+网关已有多个「客户端只做业务、上游密钥只在服务端」的先例：
+`FastenerAiService.chat` 用 `process.env.AI_LLM_API_KEY` 代 `customerId` 调
+`/chat/completions`（`src/app/Services/Fastener/FastenerAiService.ts:243-246`，调用前有会话归属
+`:213` 与额度预检 `:217-223`、计费 `:336-343`）；短信（`resources/sms/AliyunSmsClient.ts:52-65`，
+密钥来自 DB 配置行 `SmsConfigService.ts:46`）、OSS（`Attachments/OssService.ts:38-45`，
+下发预签名 URL `FastenerToolService.ts:509-511`）、微信/支付宝
+（`resources/payments/WechatOAuthService.ts:84-95`）同属一类。
+**限制**：桌面端的"第三方 API"就是网关本身，所以 A 在这里退化为「客户端不再以应用身份签名」，
+真正的收益要给的是 AI/短信/OSS 这类真第三方——那部分已经是 A。**A 不适用于 `proxy_request` 主链路。**
+
+**方案 B 短期凭证——服务端地基齐全，缺的是"设备身份"这一块。**
+已具备：不透明 64 位随机令牌（`AccountsUsersService.ts:301-303`，非 JWT）、TTL
+`token_time=1800` / `front_token_time=86400`（`ConsoleAuthorizeController.ts:51`、
+`Controllers/Front/AuthorizeController.ts:53`）、半程滑动刷新 `X-New-Token`
+（`Middleware/RefreshToken.ts:27-37`）、轮换即撤销（`AccountsUsersService.ts:294-307` +
+`/signOut` `/logout`，`routes/apis/console/authorize.ts:24,27`）、Redis NX 一次性 nonce
+（`AuthenticateSecret.ts:71-76`）、带 `expires` 的 HMAC 短时签名 URL（`routes/front.ts:37`）。
+缺口（实测确认）：① 全仓无设备/安装维度概念——迁移、模型、`src/types/entities` 里
+`device|machine_id|fingerprint|client_id|install_id` **零命中**，只有 `clients_logs` 记一份
+`client` JSON 审计块（无查询路径）；② `secrets` 表的 `times_expire` 与 `permissions`
+（`database/migrations/20260121054100_secrets.ts:18-24`）**只写不校验**——
+`AuthenticateSecret` 只判 `status`（`:56-59`），过期与授权范围不生效；③ 要让签名密钥改为
+"服务端按会话签发"，必须动 `md5(sha256(appId+ts+nonce)+appSecret)` 这条协议（客户端与
+`AuthenticateSecret.ts:65-67` 同时改），属跨仓协议变更。**结论：B 可行且是唯一根治方向，
+但需要后端排期，不能由客户端仓库单方面完成。**
+
+**方案 C 客户端持有应用凭证——当前实际形态，明确不对本机用户保密。**
+可达路径清单（本机即可，无需越权）：读 `<AppData>/console.env` 明文；读未加密的本地
+`secrets` 表；进程内存中的 `OnceLock<String>`（退出零化缺失）；调试器/Frida 钩 `env_var`。
+`strip = true`、AES-CBC 落库、改名 `TAURI_APP_*` 都只提高成本，不构成保密
+（CBC 还无完整性，可位翻转）。**只有在接受该风险并配齐权限限制、配额、监控、轮换、泄露响应
+时才可使用**，而这五项里"权限限制/过期"目前是空列（见 B 缺口②）。
+
+### 9.3 决策与实施顺序
+
+1. **当下（已落地）**：维持 C 的协议不变，把暴露面从"处处可读"收到"两处"——
+   环境文件 + 本地 secrets 表；出网目标/请求头/本地文件/跨环境四个方向做成机器校验（§8.4）。
+2. **短期收口（不改协议，客户端可独立完成，需负责人确认）**：
+   发布机把 `console.env/books.env` 权限设为 `0600` 并纳入部署脚本；console 本地库补齐
+   SQLCipher 或至少强制 `TAURI_FIELD_CRYPT_SECRET` 独立配置（不复用 `TAURI_LINK_SECRET`）；
+   `secrets` 表 `app_url/app_secret` 从渲染层可读的管理 CRUD 中摘出（读路径只给 Rust）。
+3. **根治（需后端，推荐 B）**：设备注册表 + 首启鉴权换取短时签名密钥（内存驻留、不落盘、
+   可撤销），同时把 `secrets.times_expire/permissions` 真正接入 `AuthenticateSecret`，
+   使"泄露一把密钥"的影响面从"全租户长期可用"降为"单设备单时间窗"。
+4. **明确不承诺**：任何混淆、加密、Rust 编译或环境变量隔离都不能阻止本机凭证提取（§2、§8.3）。
+
+### 9.4 阻碍项（需要外部信息才能继续）
+- 【需确认：`console.env/books.env` 如何到达用户机】`tauri.conf.json` 未配 `bundle.resources`，
+  CI 只注入签名私钥；若依赖人工分发，`0600` 与轮换都无强制点。
+- 【需后端：B 的设备鉴权端点与密钥签发协议】涉及 `AuthenticateSecret`/`VerifySignature`
+  双改，客户端仓库无权单方面变更签名算法（本轮已按约束保持协议原样）。
+- 【同构待对齐】`reqwest` console 0.13 / books 0.12、console 明文 rusqlite / books SQLCipher、
+  插件集差异——出网栈不同会让"同构"结论只能覆盖逻辑层而非依赖层。
+
+
 

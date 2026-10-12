@@ -37,10 +37,14 @@ npm run dev            # 仅启动前端 dev server（http://localhost:9001；.e
 npm run tauri:dev      # 启动完整桌面应用（前端经 dev:test 加载 .env.test＝本地链路密钥，Rust 侧由 with-tauri-env.mjs 注入 TAURI_LINK_*/TAURI_APP_*，出站请求 TAURI_APP_BASE_URL 对应的网关 + Rust 热重载）
 
 npm run typecheck      # 前端类型检查（vue-tsc --noEmit）
-npm run build          # 前端类型检查 + 生产构建（输出 dist/）
+npm run build          # 完整桌面端出包链：vite:build（生产构建 + 产物密钥扫描）→ tauri:build（含 beforeBuildCommand 的单文件重建）→ make-dmg → 安装包密钥扫描
+                       # 单跑 Web 资源构建请用 npm run vite:build；仅类型检查 + Web 构建用 npm run build:check
+                       # 注意：本链不做任何凭证注入——出站网关凭证只来自 <AppData>/books.env 或本地 secrets 表
+npm run scan:dist      # 扫描 dist/：检出 TAURI_APP_*（出站网关凭证）或非本环境链路密钥即 exit 1
+npm run scan:installer # 扫描 src-tauri/target/release/bundle/ 的已展开产物与二进制（.dmg 需挂载后再扫）
 npm run tauri build    # 打包桌面安装包（产物见 src-tauri/target/release/bundle/）
 
-cd src-tauri && cargo test   # Rust 单测（加密 / 行转换 / 标识符防注入 / cron）
+cd src-tauri && cargo test   # Rust 单测（加密 / 行转换 / 标识符防注入 / cron / 出网地址与跨环境隔离）
 
 npx tauri icon <1024x1024.png>   # 由源图重新生成全套应用图标
 ```
@@ -54,6 +58,8 @@ Rust 侧源码不含任何密钥（AGENTS §6.3）：
 
 | 变量 | 作用 | 缺省行为 |
 | --- | --- | --- |
+| `TAURI_LINK_ID` / `TAURI_LINK_SECRET` / `TAURI_LINK_IV` | 本地链路凭证：渲染层 ↔ Rust 的验签与加解密 | 无内置默认值；缺失或长度非 32/16 时启动打 `ERROR`，所有 `proxy_request` 失败关闭（`4016000305`）。`npm run tauri:dev` 由 `scripts/with-tauri-env.mjs` 从同环境文件的 `VITE_APP_*` 自动映射 |
+| `TAURI_APP_ID` / `TAURI_APP_SECRET` / `TAURI_APP_IV` / `TAURI_APP_BASE_URL` | 出站网关凭证与地址：Rust → gateway | 运行时优先取本地 `secrets` 表 status=1 有效行；**源码不内置任何 dev/prod 地址**，两者都缺即明确失败。正式包出网限 `ALLOWED_GATEWAY_ORIGINS`，开发/测试构建默认拒绝正式网关（需 `EDTIB_ALLOW_PROD_EGRESS=1`） |
 | `TAURI_DB_KEY_HEX` | 64 位十六进制 SQLCipher 主密钥（调试 / 自动化场景显式指定） | 未设置时按 Keychain → `<AppData>/.sqlcipher-key` 顺序取用或生成 |
 | `TAURI_FIELD_CRYPT_SECRET` / `TAURI_FIELD_CRYPT_IV` | 本地库字段级 AES-256-CBC 密钥（`sha256` 派生 key/iv） | **未配置 `TAURI_FIELD_CRYPT_SECRET` 时字段加解密关闭，字段以明文透传**；显式配置 IV 即进入与老 Electron 数据互读写的固定 IV 兼容模式，否则写出随机 IV 前置（`hex(iv‖cipher)`） |
 | `EDTIB_DATA_DIR` / `EDTIB_LEGACY_DATA_DIR` | 覆盖应用数据目录（测试与自定义部署） | 平台默认 AppData 目录 |
@@ -61,7 +67,8 @@ Rust 侧源码不含任何密钥（AGENTS §6.3）：
 | `EDTIB_VERSION_ALIAS` / `EDTIB_VERSION_TIMER` | 构建期注入，拼出老版 `getAppVersion` 文案 | 未注入时回落到 `CARGO_PKG_VERSION` |
 
 > Keychain 中若已存在**非法**密钥记录，程序不会覆盖重写（避免既有加密库永久失读），而是回退同目录密钥文件，仍不可用则报错退出等待人工处理。
-> 本地链路凭证（`appId` / `appSecret` / `appIv`）由前端 `VITE_APP_*` 在构建期注入，签名与加解密在 `src/utils/tauriHttp.ts` 完成后交给 Rust 出网。
+> `TAURI_LINK_*`（= `VITE_APP_*`）按设计会被编译进渲染层产物，本地链路因此**不是保密边界**；
+> `TAURI_APP_*` 只从进程环境或 `<AppData>/books.env` 读入，由 `npm run scan:dist` / `npm run scan:installer` 机器校验（详见 `docs/security/tauri-secret-hardening.md` §8.4）。
 > 完整变量说明见 `.env.example`。
 
 ## 目录结构
