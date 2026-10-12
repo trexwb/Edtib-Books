@@ -12,8 +12,8 @@ export const cliConfig: { [key: string]: string | number | boolean } = {
   // 放置生成的静态资源 (js、css、img、fonts) 的目录。
   assetsDir: 'static',
   // 开发环境端口号
-  // [迁移调整] 与 Tauri v2 脚手架固定端口保持一致（tauri.conf.json -> build.devUrl）
-  port: 1420,
+  // [迁移调整] 与 docker nginx `/front/` 代理口一致（tauri.conf.json -> build.devUrl 同步固定）
+  port: 9001,
   // pwa
   pwa: false,
   // build时规定触发警告的 chunk 大小。（以 kbs 为单位）

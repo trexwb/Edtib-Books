@@ -6,7 +6,7 @@
   "identifier": "com.edtib.books",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:9001",
     "beforeBuildCommand": "TAURI_BUILD=1 npm run vite:build && node scripts/remove-dist-sw.mjs",
     "frontendDist": "../dist"
   },

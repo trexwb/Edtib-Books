@@ -23,7 +23,10 @@
     "lint:eslint": "eslint {src,mock,library,types}/**/*.{vue,js,ts} --fix",
     "lint:prettier": "prettier {src,mock,library,types}/**/*.{html,vue,css,sass,scss,js,ts,md} --write",
     "lint:stylelint": "stylelint {src,mock,library,types}/**/*.{vue,css,sass,scss} --fix --cache --cache-location node_modules/.cache/stylelint/",
-    "generate-pwa-assets": "pwa-assets-generator"
+    "generate-pwa-assets": "pwa-assets-generator",
+    "version:set": "node scripts/bump-version.mjs",
+    "version:patch": "node scripts/bump-version.mjs --patch",
+    "version:check": "node scripts/check-version.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",

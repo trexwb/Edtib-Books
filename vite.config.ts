@@ -24,7 +24,7 @@ import {
 //   1. base 固定 './'：Tauri 打包后前端由 tauri://localhost 自定义协议加载，无服务器基准路径；
 //   2. 构建产物输出到项目根 dist/（tauri.conf.json -> build.frontendDist = ../dist），
 //      不再输出到 Electron 的 electron/output/view；
-//   3. dev 端口与 Tauri 脚手架保持一致（1420）且 strictPort（tauri.conf.json devUrl 固定）；
+//   3. dev 端口为 9001（与 nginx /front/ 代理口一致）且 strictPort（tauri.conf.json devUrl 固定）；
 //   4. build.target 按 macOS WKWebView 能力设定（es2021 + safari15）；
 //   5. 旧项目基于 rolldown-vite(vite8) 的 codeSplitting.groups 在 rollup 内核的 vite7 上不生效，
 //      改为等价的手工分包函数（声明顺序即匹配优先级，与旧语义一致）；
@@ -67,7 +67,7 @@ export default defineConfig(({ mode }: ConfigEnv): UserConfig => {
         ? {
             protocol: 'ws',
             host,
-            port: 1421,
+            port: 9001,
             overlay: true,
           }
         : {

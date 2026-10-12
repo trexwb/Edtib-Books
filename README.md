@@ -33,7 +33,7 @@ edtib books 桌面端由 **Electron 迁移至 Tauri v2**。业务代码已完成
 ```bash
 npm install            # 安装前端依赖
 
-npm run dev            # 仅启动前端 dev server（http://localhost:1420）
+npm run dev            # 仅启动前端 dev server（http://localhost:9001）
 npm run tauri dev      # 启动完整桌面应用（前端 + Rust 热重载）
 
 npm run typecheck      # 前端类型检查（vue-tsc --noEmit）
@@ -70,7 +70,7 @@ Rust 侧源码不含任何密钥（AGENTS §6.3）：
 books/
 ├── index.html              # Vite 入口 HTML
 ├── package.json            # 前端依赖与脚本
-├── vite.config.ts          # Vite 配置（固定端口 1420，忽略 src-tauri）
+├── vite.config.ts          # Vite 配置（固定端口 9001，忽略 src-tauri）
 ├── tsconfig.json           # 前端 TS 配置
 ├── tsconfig.node.json
 ├── .env.example            # 前端构建期 + Rust 运行期变量说明
