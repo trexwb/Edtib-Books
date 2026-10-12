@@ -112,7 +112,8 @@ export default defineConfig(({ mode }: ConfigEnv): UserConfig => {
           chunkFileNames: outputHash ? 'static/js/[name]-[hash].js' : 'static/js/[name].js',
           entryFileNames: outputHash ? 'static/js/[name]-[hash].js' : 'static/js/[name].js',
           assetFileNames: outputHash ? 'static/[ext]/[name]-[hash].[ext]' : 'static/[ext]/[name].[ext]',
-          manualChunks(id: string) {
+          // 桌面端（TAURI_BUILD）走 singlefile 内联，codeSplitting=false 与 manualChunks 互斥，故关闭
+          manualChunks: process.env.TAURI_BUILD ? undefined : function (id: string) {
             if (!id.includes('node_modules')) return
             for (const [chunkName, test] of manualChunkGroups) {
               if (test.test(id)) return chunkName
