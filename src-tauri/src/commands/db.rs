@@ -5,15 +5,16 @@
 //!     → 统一信封 `{ code, message, timestamp, data }`（前端 `requestBridge` 读取 `result.data`）；
 //!   * `db_get_list` → 直接返回 `{ total, list }`（老实现未加信封，分页总数依赖该结构）。
 //!
-//! 表名白名单来自 [`crate::db::models`]（老项目 model 元数据转译），未注册的表返回明确错误，
+//! 表名白名单来自 [`crate::models`]（老项目 model 元数据转译），未注册的表返回明确错误，
 //! 由前端按既有逻辑降级为 HTTP 请求。
 
 use serde_json::{json, Map, Value};
 use tauri::State;
 
-use crate::db::models::ModelDef;
-use crate::db::{execute, models};
-use crate::error::{ok_envelope, AppError, AppResult};
+use crate::db::execute;
+use crate::error::{AppError, AppResult};
+use crate::models::{self, ModelDef};
+use crate::response::{self, Envelope};
 use crate::state::AppState;
 
 /// 老实现 `base.ts` 的默认分页大小
@@ -39,7 +40,7 @@ pub async fn db_find_all(
     state: State<'_, AppState>,
     table: String,
     filters: Option<Value>,
-) -> AppResult<Value> {
+) -> AppResult<Envelope> {
     let model = model_of(&table)?;
     let filters = filters.unwrap_or_else(|| json!({}));
     let database = state.database()?;
@@ -47,7 +48,7 @@ pub async fn db_find_all(
     let rows = database.with(|conn| {
         execute::select_rows(conn, model, &filters, None, None, None, crypt)
     })?;
-    Ok(ok_envelope(Value::Array(rows)))
+    Ok(response::success(Value::Array(rows)))
 }
 
 /// db_get_list：分页查询（老 `db-get-list`），返回 `{ total, list }`
@@ -89,14 +90,14 @@ pub async fn db_find_one(
     state: State<'_, AppState>,
     table: String,
     id: Value,
-) -> AppResult<Value> {
+) -> AppResult<Envelope> {
     let model = model_of(&table)?;
     let database = state.database()?;
     let crypt = state.crypt()?;
     let row = database.with(|conn| {
         execute::find_one_row(conn, model, &filter_by_id(model, &id), crypt)
     })?;
-    Ok(ok_envelope(row))
+    Ok(response::success(row))
 }
 
 /// db_create：新增单条，返回落库后的完整行（老 `db-create`）
@@ -105,7 +106,7 @@ pub async fn db_create(
     state: State<'_, AppState>,
     table: String,
     data: Value,
-) -> AppResult<Value> {
+) -> AppResult<Envelope> {
     let model = model_of(&table)?;
     let database = state.database()?;
     let crypt = state.crypt()?;
@@ -118,7 +119,7 @@ pub async fn db_create(
     } else {
         database.with(|conn| execute::find_one_row(conn, model, &filter_by_id(model, &key), crypt))?
     };
-    Ok(ok_envelope(row))
+    Ok(response::success(row))
 }
 
 /// db_update：按主键更新，返回更新后的行（老 `db-update`）
@@ -128,7 +129,7 @@ pub async fn db_update(
     table: String,
     id: Value,
     data: Value,
-) -> AppResult<Value> {
+) -> AppResult<Envelope> {
     let model = model_of(&table)?;
     let database = state.database()?;
     let crypt = state.crypt()?;
@@ -140,7 +141,7 @@ pub async fn db_update(
     } else {
         Value::Null
     };
-    Ok(ok_envelope(row))
+    Ok(response::success(row))
 }
 
 /// db_delete：按主键删除，返回是否删除成功（老 `db-delete`）
@@ -149,13 +150,13 @@ pub async fn db_delete(
     state: State<'_, AppState>,
     table: String,
     id: Value,
-) -> AppResult<Value> {
+) -> AppResult<Envelope> {
     let model = model_of(&table)?;
     let database = state.database()?;
     let affected = database.with(|conn| {
         execute::delete_rows(conn, model, &filter_by_id(model, &id))
     })?;
-    Ok(ok_envelope(json!(affected.as_i64().unwrap_or(0) > 0)))
+    Ok(response::success(json!(affected.as_i64().unwrap_or(0) > 0)))
 }
 
 /// db_bulk_create：批量新增，返回主键数组（老 `db-bulk-create`）
@@ -164,7 +165,7 @@ pub async fn db_bulk_create(
     state: State<'_, AppState>,
     table: String,
     data: Value,
-) -> AppResult<Value> {
+) -> AppResult<Envelope> {
     let model = model_of(&table)?;
     let rows = match data {
         Value::Array(rows) => rows,
@@ -173,5 +174,5 @@ pub async fn db_bulk_create(
     let database = state.database()?;
     let crypt = state.crypt()?;
     let keys = database.with(|conn| execute::insert_rows(conn, model, &rows, crypt))?;
-    Ok(ok_envelope(keys))
+    Ok(response::success(keys))
 }

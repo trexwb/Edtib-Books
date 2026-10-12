@@ -120,8 +120,10 @@ pub fn resolve_endpoints(app: &AppHandle) -> Vec<String> {
         }
     };
 
-    if let Ok(value) = std::env::var("EDTIB_UPDATER_ENDPOINT") {
-        push_all(&value);
+    // [框架统一] 运行时注入经 config 统一入口：进程环境变量 > 密钥文件 books.env
+    let endpoint = crate::config::updater_endpoint();
+    if !endpoint.is_empty() {
+        push_all(endpoint);
     }
     if let Some(value) = option_env!("EDTIB_UPDATER_ENDPOINT") {
         push_all(value);

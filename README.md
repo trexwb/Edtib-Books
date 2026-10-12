@@ -33,8 +33,8 @@ edtib books 桌面端由 **Electron 迁移至 Tauri v2**。业务代码已完成
 ```bash
 npm install            # 安装前端依赖
 
-npm run dev            # 仅启动前端 dev server（http://localhost:9001）
-npm run tauri dev      # 启动完整桌面应用（前端 + Rust 热重载）
+npm run dev            # 仅启动前端 dev server（http://localhost:9001；.env.development＝浏览器直连测试网关 gateway-dev.edtib.com）
+npm run tauri:dev      # 启动完整桌面应用（前端经 dev:test 加载 .env.test＝本地链路密钥，Rust 侧由 with-tauri-env.mjs 注入 TAURI_LINK_*/TAURI_APP_*，出站请求 TAURI_APP_BASE_URL 对应的网关 + Rust 热重载）
 
 npm run typecheck      # 前端类型检查（vue-tsc --noEmit）
 npm run build          # 前端类型检查 + 生产构建（输出 dist/）
@@ -54,8 +54,8 @@ Rust 侧源码不含任何密钥（AGENTS §6.3）：
 
 | 变量 | 作用 | 缺省行为 |
 | --- | --- | --- |
-| `EDTIB_DB_KEY_HEX` | 64 位十六进制 SQLCipher 主密钥（调试 / 自动化场景显式指定） | 未设置时按 Keychain → `<AppData>/.sqlcipher-key` 顺序取用或生成 |
-| `EDTIB_FIELD_CRYPT_SECRET` / `EDTIB_FIELD_CRYPT_IV` | 本地库字段级 AES-256-CBC 密钥（`sha256` 派生 key/iv） | **未配置 `EDTIB_FIELD_CRYPT_SECRET` 时字段加解密关闭，字段以明文透传**；显式配置 IV 即进入与老 Electron 数据互读写的固定 IV 兼容模式，否则写出随机 IV 前置（`hex(iv‖cipher)`） |
+| `TAURI_DB_KEY_HEX` | 64 位十六进制 SQLCipher 主密钥（调试 / 自动化场景显式指定） | 未设置时按 Keychain → `<AppData>/.sqlcipher-key` 顺序取用或生成 |
+| `TAURI_FIELD_CRYPT_SECRET` / `TAURI_FIELD_CRYPT_IV` | 本地库字段级 AES-256-CBC 密钥（`sha256` 派生 key/iv） | **未配置 `TAURI_FIELD_CRYPT_SECRET` 时字段加解密关闭，字段以明文透传**；显式配置 IV 即进入与老 Electron 数据互读写的固定 IV 兼容模式，否则写出随机 IV 前置（`hex(iv‖cipher)`） |
 | `EDTIB_DATA_DIR` / `EDTIB_LEGACY_DATA_DIR` | 覆盖应用数据目录（测试与自定义部署） | 平台默认 AppData 目录 |
 | `EDTIB_UPDATER_ENDPOINT` | 更新清单地址（逗号/换行分隔可多个） | 回落到 `tauri.conf.json` 的 `plugins.updater.endpoints`；两者都缺省时 `check_update` 明确报错而非静默 |
 | `EDTIB_VERSION_ALIAS` / `EDTIB_VERSION_TIMER` | 构建期注入，拼出老版 `getAppVersion` 文案 | 未注入时回落到 `CARGO_PKG_VERSION` |

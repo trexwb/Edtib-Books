@@ -13,8 +13,7 @@ use rusqlite::types::Value as SqlValue;
 use serde_json::{Number, Value};
 
 use crate::error::{AppError, AppResult};
-
-use super::models::ModelDef;
+use crate::models::ModelDef;
 
 /// 与老实现一致的默认分页参数
 pub const DEFAULT_LIMIT: i64 = 10;

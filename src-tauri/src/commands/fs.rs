@@ -15,7 +15,8 @@ use std::path::{Component, Path, PathBuf};
 use serde_json::Value;
 use tauri::AppHandle;
 
-use crate::error::{ok_envelope, AppError, AppResult};
+use crate::error::{AppError, AppResult};
+use crate::response::{self, Envelope};
 use crate::paths;
 
 /// 解析前端传入的路径。
@@ -49,6 +50,7 @@ pub(crate) fn resolve_input(
     if raw.is_absolute() {
         let allowed = [base.clone(), paths::documents_dir(app)];
         if allowed.iter().any(|dir| raw.starts_with(dir)) {
+            ensure_not_protected(raw)?;
             return Ok(raw.to_path_buf());
         }
         return Err(AppError::forbidden(format!(
@@ -56,16 +58,55 @@ pub(crate) fn resolve_input(
         )));
     }
 
-    paths::resolve(&base, trimmed)
+    let resolved = paths::resolve(&base, trimmed)?;
+    ensure_not_protected(&resolved)?;
+    Ok(resolved)
 }
+
+/// 密钥文件与本地库文件禁止经 `fs_*` 命令读写。
+///
+/// 应用数据目录本身是 `fs_*` 的合法作用域（缓存、导出件都放在这里），
+/// 但 `console.env` 装着 `TAURI_LINK_*` / `TAURI_APP_*`、`*.db` 装着解密后即可用的会话与凭证，
+/// 渲染层（以及任何拿到 webview 执行能力的注入）读一次就等同于拿到全部密钥，
+/// 写一次则可以在下次启动时替换凭证。业务读写从不触碰这些文件名，因此直接拒绝。
+fn ensure_not_protected(path: &Path) -> AppResult<()> {
+    let blocked = |name: &str| {
+        let lower = name.to_lowercase();
+        lower.ends_with(".env")
+            || lower.ends_with(".db")
+            || lower.ends_with(".db-wal")
+            || lower.ends_with(".db-shm")
+            || lower.ends_with(".sqlcipher-key")
+            || lower == ".sqlcipher-key"
+    };
+    let hit = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| blocked(name))
+        .map(str::to_string)
+        .or_else(|| {
+            path.parent()
+                .and_then(|parent| parent.file_name())
+                .and_then(|name| name.to_str())
+                .filter(|name| blocked(name))
+                .map(str::to_string)
+        });
+    match hit {
+        Some(name) => Err(AppError::bad_request(format!(
+            "该文件由系统托管，禁止通过 fs_* 读写：{name}"
+        ))),
+        None => Ok(()),
+    }
+}
+
 
 /// fs_read_file：读取文本文件，不存在时返回 `data: null`（老 `fs-read-file`，前端依赖该约定）
 #[tauri::command]
-pub async fn fs_read_file(app: AppHandle, file_path: String) -> AppResult<Value> {
+pub async fn fs_read_file(app: AppHandle, file_path: String) -> AppResult<Envelope> {
     let path = resolve_input(&app, &file_path, false)?;
     match std::fs::read_to_string(&path) {
-        Ok(content) => Ok(ok_envelope(Value::String(content))),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(ok_envelope(Value::Null)),
+        Ok(content) => Ok(response::success(Value::String(content))),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(response::success(Value::Null)),
         Err(err) => Err(AppError::internal(format!(
             "读取文件失败 {}：{err}",
             paths::to_string(&path)
@@ -79,7 +120,7 @@ pub async fn fs_write_file(
     app: AppHandle,
     file_path: String,
     data: String,
-) -> AppResult<Value> {
+) -> AppResult<Envelope> {
     let path = resolve_input(&app, &file_path, false)?;
     if let Some(parent) = path.parent() {
         paths::ensure_dir(parent)?;
@@ -87,7 +128,7 @@ pub async fn fs_write_file(
     std::fs::write(&path, data).map_err(|err| {
         AppError::internal(format!("写入文件失败 {}：{err}", paths::to_string(&path)))
     })?;
-    Ok(ok_envelope(Value::String(paths::to_string(&path))))
+    Ok(response::success(Value::String(paths::to_string(&path))))
 }
 
 /// fs_delete_file：删除文件（老 `fs-delete-file`：失败返回 false，不抛错）

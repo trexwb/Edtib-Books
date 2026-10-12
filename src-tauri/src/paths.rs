@@ -24,12 +24,11 @@ pub fn env_name() -> &'static str {
     }
 }
 
-/// 应用数据目录（可用环境变量 `EDTIB_DATA_DIR` 覆盖，便于测试与自定义部署）
+/// 应用数据目录（可用环境变量 `EDTIB_DATA_DIR` 覆盖，便于测试与自定义部署；经 config 统一入口）
 pub fn data_dir(app: &AppHandle) -> PathBuf {
-    if let Ok(dir) = std::env::var("EDTIB_DATA_DIR") {
-        if !dir.trim().is_empty() {
-            return PathBuf::from(dir);
-        }
+    let dir = crate::config::data_dir_override();
+    if !dir.is_empty() {
+        return PathBuf::from(dir);
     }
     app.path()
         .app_data_dir()
@@ -38,10 +37,9 @@ pub fn data_dir(app: &AppHandle) -> PathBuf {
 
 /// 旧版 Electron 的 userData 目录
 pub fn legacy_data_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("EDTIB_LEGACY_DATA_DIR") {
-        if !dir.trim().is_empty() {
-            return PathBuf::from(dir);
-        }
+    let dir = crate::config::legacy_data_dir_override();
+    if !dir.is_empty() {
+        return PathBuf::from(dir);
     }
     #[cfg(target_os = "windows")]
     {

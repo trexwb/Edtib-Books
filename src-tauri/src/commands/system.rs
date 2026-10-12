@@ -6,9 +6,10 @@
 //! 说明：Electron 版本号（node / chrome / electron）在 Tauri 下不再存在，统一返回空字符串，
 //! 真实运行时版本通过 `webview`（WebView 内核版本）体现；`app` 版本由 `get_app_version` 提供。
 
-use serde_json::{json, Value};
+use serde_json::json;
 
 use crate::error::AppResult;
+use crate::response::{self, Envelope};
 
 /// Tauri 侧平台名（对齐 Node `os.platform()` 取值：darwin / win32 / linux）
 fn platform_name() -> &'static str {
@@ -26,7 +27,7 @@ fn format_gb(bytes: u64) -> String {
 
 /// system_get_info：系统信息（老 `system-get-info`）
 #[tauri::command]
-pub async fn system_get_info() -> AppResult<Value> {
+pub async fn system_get_info() -> AppResult<Envelope> {
     use sysinfo::System;
 
     let system = System::new_all();
@@ -35,7 +36,8 @@ pub async fn system_get_info() -> AppResult<Value> {
     let free_memory = system.available_memory();
     let hostname = System::host_name().unwrap_or_default();
 
-    Ok(json!({
+    // [框架统一] 与 console 同款成功信封 `{ code, message, timestamp, data }`
+    Ok(response::success(json!({
         "platform": platform_name(),
         "arch": std::env::consts::ARCH,
         "hostname": hostname,
@@ -49,5 +51,5 @@ pub async fn system_get_info() -> AppResult<Value> {
             "electron": "",
         },
         "webview": tauri::webview_version().unwrap_or_default(),
-    }))
+    })))
 }

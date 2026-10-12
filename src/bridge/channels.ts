@@ -1,14 +1,16 @@
 /**
  * @description Electron IPC 通道 -> Tauri invoke 命令 / 事件 映射表
  *
- * 旧实现：electron/src/preload.ts 通过 contextBridge 暴露 window.electronAPI，
- *        每个方法转发到 ipcRenderer.invoke('<通道名>')；
- * 新实现：src/bridge 统一把同样的方法转发到 @tauri-apps/api 的 invoke('<命令名>')，
- *        命令名与旧通道名保持"一一对应、语义相同"的可读映射，Rust 侧按此表实现。
+ * 旧实现：`electron/src/preload.ts` 通过 contextBridge 暴露 window.electronAPI，
+ *        每个方法转发到 `ipcRenderer.invoke('<通道名>')`，主进程由 ipcMain.handle 承接；
+ * 新实现：`src/bridge` 把同一套方法转发到 `@tauri-apps/api` 的 `invoke('<命令名>')`，
+ *        命令名与旧通道名保持「一一对应、语义相同」，Rust 侧按本表实现（src-tauri/src/commands/*）。
  *
- * Rust 侧实现约定（@tauri-apps/plugin 或 src-tauri/src/commands/*.rs）：
- *   #[tauri::command] fn get_app_version(...) -> ...   // 前端 invoke('get_app_version', {...})
- * 参数使用 camelCase 传入，Tauri 会自动转换为 Rust 的 snake_case 形参。
+ * Rust 侧实现约定：
+ *   #[tauri::command] fn db_get_list(...) -> ...   // 前端 invoke('db_get_list', { table, filters, ... })
+ * 参数以 camelCase 传入，Tauri 自动映射到 Rust 的 snake_case 形参。
+ *
+ * 与 console 项目的差异：books 保留 `cache-file` 通道（`src/utils/imageUrl.ts` 本地图片缓存消费方）。
  * @Author: trexwb
  */
 

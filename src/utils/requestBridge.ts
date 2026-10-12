@@ -3,11 +3,24 @@
  * 优先使用 IPC 直连本地数据库，失败时 fallback 到 HTTP
  * @Author: trexwb
  * @Date: 2026-04-15 23:00
+ *
+ * 迁移说明（Tauri v2）：
+ * - `window.electronAPI` 不再由 Electron preload 注入，而由 `src/bridge`（`setupBridge()`，
+ *   在 `src/main.ts` 启动时调用）在 Tauri 宿主下挂载，方法签名与老 preload 完全一致；
+ *   通道名 -> Tauri 命令名对照见 `src/bridge/channels.ts`，Rust 侧实现见 `src-tauri/src/commands/*`；
+ * - 因此 `ipc:` 分支在桌面端可达：本地 SQLite / 本地文件读写经 `db_*` / `fs_*` / `system_get_info`
+ *   命令完成；命令未注册、表名不在白名单、本地表为空或调用失败时，一律降级到 HTTP（在线行为不变）；
+ * - `http` 分支调用的 `/@/utils/request` 在 Tauri 宿主下已切换为 IPC 转发（两仓适配器均为
+ *   `src/utils/tauriAdapter.ts` + 同一个命令 `proxy_request`，代理链路同构）；
+ * - 浏览器宿主（`npm run dev` 直开页面）没有 Tauri 运行时，`isElectron()` 为 false，全部走 HTTP。
+ *
+ * [框架统一] books / console 两仓的本文件（逻辑与骨架）完全一致，改动此处必须双侧同步。
  */
 
 import request from '/@/utils/request'
 // [迁移调整] 统一走 src/bridge 桥接层：Tauri 环境下由 invoke 承载，Electron 兼容层同源
 import { bridge, isBridgeAvailable } from '/@/bridge'
+import type { BridgeEnvelope } from '/@/bridge/types'
 
 // C-B4: IPC 方法白名单，仅允许显式声明的受控方法，杜绝 __proto__/constructor 等原型链或危险方法注入
 const DB_METHODS: ReadonlySet<string> = new Set(['getList', 'findOne', 'findAll', 'create', 'update', 'delete'])
@@ -33,7 +46,7 @@ const cloneForIpc = (value: any): any => {
   }
 }
 
-// IPC 数据库调用（直接调用 electronAPI.db[method]，而非通过 electronAPI[channel] 函数调用）
+// IPC 数据库调用（直接调用 bridge.db[method]，而非通过 electronAPI[channel] 函数调用）
 const ipcDbCall = async (method: string, table: string, ...args: any[]): Promise<any> => {
   if (!DB_METHODS.has(method)) {
     throw new Error(`Disallowed IPC db method: ${method}`)
@@ -61,7 +74,7 @@ const ipcDbCall = async (method: string, table: string, ...args: any[]): Promise
   })
 }
 
-// IPC 文件系统调用（直接调用 electronAPI.fs[method]）
+// IPC 文件系统调用（直接调用 bridge.fs[method]）
 const ipcFsCall = async (method: string, ...args: any[]): Promise<any> => {
   if (!FS_METHODS.has(method)) {
     throw new Error(`Disallowed IPC fs method: ${method}`)
@@ -89,7 +102,7 @@ const ipcFsCall = async (method: string, ...args: any[]): Promise<any> => {
   })
 }
 
-// IPC 系统调用（直接调用 electronAPI.system[method]）
+// IPC 系统调用（直接调用 bridge.system[method]）
 const ipcSystemCall = async (method: string, ...args: any[]): Promise<any> => {
   if (!SYSTEM_METHODS.has(method)) {
     throw new Error(`Disallowed IPC system method: ${method}`)
@@ -116,6 +129,21 @@ const ipcSystemCall = async (method: string, ...args: any[]): Promise<any> => {
       })
   })
 }
+
+/**
+ * 信封拆包：Rust 数据类命令统一返回 `{ code, message, timestamp, data }` 信封
+ * （`db_get_list` 例外，裸返回 `{ total, list }`）；
+ * `data === null` 视为「本地无该记录」，返回 null 由调用方降级 HTTP。
+ */
+const unwrap = (result: any): any => (result && result.data !== undefined ? result.data : result)
+
+/** 浏览器宿主信封兜底（保持调用方读取 `code === 200` / `data` 的口径可用） */
+const fallbackEnvelope = <T>(data: T): BridgeEnvelope<T> => ({
+  code: 200,
+  message: 'success',
+  timestamp: new Date().toISOString(),
+  data,
+})
 
 /**
  * 离线优先请求桥接器
@@ -151,9 +179,10 @@ const requestBridge = {
           options.ipc.limit,
           options.ipc.offset
         )
-        const data = result.data || result
-        if (data && typeof data.total === 'number') {
-          return { total: data.total || 0, list: data.list || [] }
+        const data = unwrap(result)
+        // 本地表为空（total=0 或 list 为空）时不采信 IPC 结果，继续降级 HTTP（在线行为不变）
+        if (data && typeof data.total === 'number' && Array.isArray(data.list) && data.list.length > 0) {
+          return { total: data.total || 0, list: data.list }
         }
       } catch (error) {
         console.warn('[IPC fallback to HTTP]', error)
@@ -185,14 +214,14 @@ const requestBridge = {
     }
     http?: {
       url: string
-      data: { id?: number | number[] }
+      data?: { id?: number | number[] }
     }
   }): Promise<any> => {
     // 优先 IPC
     if (options.ipc && isElectron()) {
       try {
         const result = await ipcDbCall('findOne', options.ipc.table, options.ipc.id)
-        const data = result.data || result
+        const data = unwrap(result)
         if (data !== null && data !== undefined && (typeof data !== 'object' || Object.keys(data).length > 0)) {
           return data
         }
@@ -234,8 +263,8 @@ const requestBridge = {
     if (options.ipc && isElectron()) {
       try {
         const result = await ipcDbCall('findAll', options.ipc.table, options.ipc.filters)
-        const data = result.data || result
-        if (data && Array.isArray(data) && data.length > 0) {
+        const data = unwrap(result)
+        if (Array.isArray(data) && data.length > 0) {
           return data
         }
       } catch (error) {
@@ -275,7 +304,7 @@ const requestBridge = {
     if (options.ipc && isElectron()) {
       try {
         const result = await ipcDbCall('create', options.ipc.table, options.ipc.data)
-        return result.data || result
+        return unwrap(result)
       } catch (error) {
         console.warn('[IPC fallback to HTTP]', error)
       }
@@ -314,7 +343,7 @@ const requestBridge = {
     if (options.ipc && isElectron()) {
       try {
         const result = await ipcDbCall('update', options.ipc.table, options.ipc.id, options.ipc.data)
-        return result.data || result
+        return unwrap(result)
       } catch (error) {
         console.warn('[IPC fallback to HTTP]', error)
       }
@@ -352,7 +381,7 @@ const requestBridge = {
     if (options.ipc && isElectron()) {
       try {
         const result = await ipcDbCall('delete', options.ipc.table, options.ipc.id)
-        return result.data || result
+        return unwrap(result)
       } catch (error) {
         console.warn('[IPC fallback to HTTP]', error)
       }
@@ -388,8 +417,9 @@ const requestBridge = {
     if (options.ipc && isElectron()) {
       try {
         const response = await ipcFsCall('readFile', options.ipc.filePath)
-        if (response && response.code === 200) {
-          return response.data
+        const text = typeof response === 'string' ? response : unwrap(response)
+        if (text) {
+          return text
         }
       } catch (error) {
         console.warn('[IPC fallback to HTTP]', error)
@@ -402,7 +432,7 @@ const requestBridge = {
         url: options.http.url,
         method: 'get',
       })
-      return data
+      return data ?? null
     }
 
     return null
@@ -424,7 +454,8 @@ const requestBridge = {
     }
 
     try {
-      return await ipcFsCall('writeFile', options.ipc.filePath, options.ipc.data)
+      const result = await ipcFsCall('writeFile', options.ipc.filePath, options.ipc.data)
+      return unwrap(result)
     } catch (error) {
       console.error('[writeFile failed]', error)
       return null
@@ -447,7 +478,7 @@ const requestBridge = {
 
     try {
       const result = await ipcFsCall('listFiles', options.ipc.dir)
-      return (result && (result.data || result)) || []
+      return unwrap(result) || []
     } catch (error) {
       console.error('[listFiles failed]', error)
       return []
@@ -456,22 +487,27 @@ const requestBridge = {
 
   /**
    * 获取系统信息
-   * IPC: system.getInfo()
+   * IPC: system.getInfo（返回 `{ code, message, timestamp, data }` 信封）
    */
-  getSystemInfo: async (): Promise<any> => {
+  getSystemInfo: async (): Promise<BridgeEnvelope> => {
     if (!isElectron()) {
-      return {
+      return fallbackEnvelope({
         platform: 'web',
         arch: 'unknown',
         hostname: 'unknown',
-      }
+      })
     }
 
     try {
       return await ipcSystemCall('getInfo')
     } catch (error) {
       console.error('[getSystemInfo failed]', error)
-      return null
+      return {
+        code: 500,
+        message: error instanceof Error ? error.message : 'Internal server error',
+        timestamp: new Date().toISOString(),
+        data: null,
+      }
     }
   },
 

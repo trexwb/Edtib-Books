@@ -1,18 +1,16 @@
-//! 统一错误类型与响应封装。
+//! 统一错误类型。
 //!
-//! 与老 Electron 主进程的返回协议保持一致：
-//!   `{ code, message, timestamp, data }`
+//! 与老 Electron 主进程的返回协议保持一致：`{ code, message, timestamp, data }`。
 //! 旧的 `ipcMain.handle` 在异常时返回 `code: 500` 的信封（而不是抛出），
-//! 前端 `requestBridge` 依赖 `code === 200` / `code === 500` 判断是否降级为 HTTP。
-//! 因此：
+//! 前端 `requestBridge` 依赖 `code === 200` / `code !== 200` 判断是否降级为 HTTP。
+//! 成功信封的构造统一收敛到 [`crate::response`]，本模块只负责错误侧：
 //!   * 数据类命令（db / fs）异常时返回信封错误（本模块的 `AppError` 序列化即为信封）；
 //!   * 前端调用点内部再按 `code` 做分支（见 src/bridge/index.ts）。
 
 use std::fmt;
 
-use chrono::{SecondsFormat, Utc};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 pub type AppResult<T> = Result<T, AppError>;
 
@@ -73,7 +71,7 @@ impl Serialize for AppError {
         let mut state = serializer.serialize_struct("AppError", 4)?;
         state.serialize_field("code", &self.code)?;
         state.serialize_field("message", &self.message)?;
-        state.serialize_field("timestamp", &now_iso())?;
+        state.serialize_field("timestamp", &crate::js::now_iso())?;
         state.serialize_field("data", &Value::Null)?;
         state.end()
     }
@@ -101,29 +99,4 @@ impl From<reqwest::Error> for AppError {
     fn from(err: reqwest::Error) -> Self {
         AppError::internal(format!("HTTP 请求失败: {err}"))
     }
-}
-
-/// 与 `new Date().toISOString()` 对齐的 UTC ISO8601（毫秒精度，Z 结尾）
-pub fn now_iso() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
-}
-
-/// 构造成功信封
-pub fn ok_envelope(data: Value) -> Value {
-    json!({
-        "code": 200,
-        "message": "success",
-        "timestamp": now_iso(),
-        "data": data,
-    })
-}
-
-/// 构造失败信封
-pub fn error_envelope(code: i64, message: impl Into<String>, data: Value) -> Value {
-    json!({
-        "code": code,
-        "message": message.into(),
-        "timestamp": now_iso(),
-        "data": data,
-    })
 }

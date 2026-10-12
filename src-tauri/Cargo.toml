@@ -33,10 +33,11 @@ chrono = { version = "0.4", features = ["serde"] }
 # 随机密钥（每设备随机生成 SQLCipher 密钥）
 rand = "0.8"
 hex = "0.4"
-# 字段级加密（对齐老项目 cast/crypt.ts 的 AES-256-CBC）
+# 字段级加密（对齐老项目 cast/crypt.ts 的 AES-256-CBC；[框架统一] md5 与 console crypt 基元同构）
 aes = "0.8"
 cbc = { version = "0.1", features = ["block-padding"] }
 sha2 = "0.10"
+md5 = "0.7"
 # HTTP 统一在 Rust 侧发起（前端不再直连后端）
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 # 系统信息（system_get_info：CPU 数 / 内存 / 主机名）

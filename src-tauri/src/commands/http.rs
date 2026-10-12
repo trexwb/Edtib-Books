@@ -6,7 +6,8 @@
 use serde_json::Value;
 use tauri::{AppHandle, State};
 
-use crate::error::{ok_envelope, AppError, AppResult};
+use crate::error::{AppError, AppResult};
+use crate::response::{self, Envelope};
 use crate::http;
 use crate::paths;
 use crate::state::AppState;
@@ -19,13 +20,13 @@ pub async fn http_request(
     method: Option<String>,
     headers: Option<Value>,
     body: Option<Value>,
-) -> AppResult<Value> {
+) -> AppResult<Envelope> {
     let method = method.unwrap_or_else(|| "GET".to_string());
     let payload = state
         .http()
         .request(&method, &url, headers.as_ref(), body.as_ref())
         .await?;
-    Ok(ok_envelope(payload.into_value()))
+    Ok(response::success(payload.into_value()))
 }
 
 /// http_download：下载到本地文件，返回 `{ path, bytes }`。
@@ -37,7 +38,7 @@ pub async fn http_download(
     url: String,
     dir: Option<String>,
     file_name: Option<String>,
-) -> AppResult<Value> {
+) -> AppResult<Envelope> {
     let base = match dir.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
         Some(dir) => super::fs::resolve_input(&app, dir, false)?,
         None => paths::cache_dir(&app),
@@ -55,7 +56,7 @@ pub async fn http_download(
 
     let dest = base.join(name);
     let bytes = state.http().download_to(&url, &dest).await?;
-    Ok(ok_envelope(serde_json::json!({
+    Ok(response::success(serde_json::json!({
         "path": paths::to_string(&dest),
         "bytes": bytes,
     })))

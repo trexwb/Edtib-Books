@@ -2,14 +2,32 @@
  * @description 桥接层类型定义（Electron -> Tauri 迁移唯一收敛点）
  *
  * 说明：
- *  - 原 Electron 版本中这些接口以全局声明形式维护在 src/types/electron.d.ts；
+ *  - 原 Electron 版本中这些接口以全局声明形式维护在 `src/types/electron.d.ts`；
  *    迁移后统一收敛到本文件，electron.d.ts 只保留 Window 全局挂载声明并从此处 re-export。
- *  - 接口签名与旧 Electron preload（electron/src/preload.ts）保持完全一致，
- *    以保证上层业务代码零改动即可切换到 Tauri invoke 实现。
+ *  - 方法签名与旧 preload（`electron/src/preload.ts`）保持一致，保证上层业务代码
+ *    （`src/utils/requestBridge.ts` 等）零改动即可切换到 Tauri invoke 实现；
+ *  - 返回值类型按 **Rust 侧实际回包** 声明：数据类命令返回 `{ code, message, timestamp, data }` 信封
+ *    （老主进程 ipcMain.handle 同款结构），`db.getList` 例外，直接返回 `{ total, list }`。
+ *
+ * 与 console 项目的差异：books 保留 `cacheFile`（本地图片缓存，`cache_file` 命令有消费方）。
  * @Author: trexwb
  */
 
-/** 更新信息（字段与 Rust update.rs::UpdateInfo::to_json 对齐） */
+/** 统一响应信封（与 Rust `src-tauri/src/error.rs::ok_envelope` 字段一致） */
+export interface BridgeEnvelope<T = any> {
+  code: number
+  message: string
+  timestamp: string
+  data: T | null
+}
+
+/** 分页结果（`db_get_list` 裸返回，老实现未加信封，前端分页总数依赖该结构） */
+export interface ListResult<T = any> {
+  total: number
+  list: T[]
+}
+
+/** 更新信息（字段与 Rust `update.rs::UpdateInfo::to_json` 对齐） */
 export interface UpdateInfo {
   version: string
   /** [迁移新增] 当前运行版本 */
@@ -21,7 +39,7 @@ export interface UpdateInfo {
   target?: string
 }
 
-/** 下载进度载荷（与 Rust EVENT_DOWNLOAD_PROGRESS 的 emit 结构对齐，Rust 发对象而非裸数字） */
+/** 下载进度载荷（Rust 侧 emit 的是对象而非裸数字，前端直接当数字用会得到 NaN） */
 export interface DownloadProgress {
   percent: number
   transferred: number
@@ -34,6 +52,7 @@ export interface SystemInfo {
   arch: string
   hostname: string
   cpus: number
+  /** [迁移限制] 未引入系统信息库依赖，内存字段返回空串 */
   totalMemory: string
   freeMemory: string
   versions: {
@@ -41,49 +60,50 @@ export interface SystemInfo {
     chrome: string
     electron: string
   }
-  /** [迁移新增] Tauri 下由系统 WebView 承载，补充可选字段，不破坏既有字段契约 */
+  /** [迁移新增] Tauri 由系统 WebView 承载，真实内核版本见该字段 */
   webview?: string
 }
 
 /**
- * 桥接接口（与 Electron preload 暴露的 window.electronAPI 完全同构）
+ * 桥接接口（与 Electron preload 暴露的 window.electronAPI 同构）
  */
 export interface ElectronAPI {
   // === 版本与更新 API ===
   getAppVersion: () => Promise<string>
   checkUpdate: () => Promise<void>
-  /** [迁移补全] 安装已下载的更新包（对应 Rust confirm_update）；老 Electron 由 quitAndInstall 承担 */
+  /** [迁移补全] 安装已下载的更新包（Rust `confirm_update`）；老 Electron 由 quitAndInstall 承担 */
   confirmUpdate: () => Promise<void>
   restartApp: () => void
-  // 注意：以下事件回调均源自 ipcRenderer.on，首个参数为 IpcRendererEvent
-  // 返回值 [迁移调整] 为注销函数，组件卸载时调用，避免重复注册导致回调多次触发
+  // 事件回调源自 ipcRenderer.on，首个参数为 IpcRendererEvent；
+  // [迁移调整] 返回注销函数，组件卸载时调用，避免重复注册导致同一回调多次触发
   onUpdateAvailable: (callback: (event: unknown, info: UpdateInfo) => void) => () => void
   onUpdateNotAvailable: (callback: (event: unknown, info: UpdateInfo) => void) => () => void
   onDownloadProgress: (callback: (event: unknown, payload: DownloadProgress) => void) => () => void
   onUpdateDownloaded: (callback: (event: unknown, info: UpdateInfo) => void) => () => void
+  /** books 专有：把远程文件落到本地缓存并返回可读路径（Rust `cache_file`） */
   cacheFile: (filePath: string) => Promise<string>
 
   // === 数据库操作 API ===
   db: {
-    findAll: (table: string, filters?: Record<string, any>) => Promise<any[] | null>
+    findAll: (table: string, filters?: Record<string, any>) => Promise<BridgeEnvelope<any[]>>
     getList: (
       table: string,
       filters?: Record<string, any>,
       order?: any[],
       limit?: number,
       offset?: number
-    ) => Promise<{ total: number; list: any[] }>
-    findOne: (table: string, id: number | string) => Promise<any | null>
-    create: (table: string, data: Record<string, any>) => Promise<any | null>
-    update: (table: string, id: number | string, data: Record<string, any>) => Promise<any | null>
-    delete: (table: string, id: number | string) => Promise<any | null>
-    bulkCreate: (table: string, data: Record<string, any>[]) => Promise<any | null>
+    ) => Promise<ListResult>
+    findOne: (table: string, id: number | string) => Promise<BridgeEnvelope<any>>
+    create: (table: string, data: Record<string, any>) => Promise<BridgeEnvelope<any>>
+    update: (table: string, id: number | string, data: Record<string, any>) => Promise<BridgeEnvelope<any>>
+    delete: (table: string, id: number | string) => Promise<BridgeEnvelope<any>>
+    bulkCreate: (table: string, data: Record<string, any>[]) => Promise<BridgeEnvelope<any>>
   }
 
   // === 文件系统 API ===
   fs: {
-    readFile: (filePath: string) => Promise<string | null>
-    writeFile: (filePath: string, data: string) => Promise<string | null>
+    readFile: (filePath: string) => Promise<BridgeEnvelope<string | null>>
+    writeFile: (filePath: string, data: string) => Promise<BridgeEnvelope<string>>
     deleteFile: (filePath: string) => Promise<boolean>
     listFiles: (dir: string) => Promise<string[]>
     getUserDataPath: () => Promise<string>
@@ -96,7 +116,7 @@ export interface ElectronAPI {
     getPlatform: () => string
     getArch: () => string
     getVersions: () => { node: string; chrome: string; electron: string }
-    getInfo: () => Promise<SystemInfo>
+    getInfo: () => Promise<BridgeEnvelope<SystemInfo>>
   }
 }
 

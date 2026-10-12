@@ -4,19 +4,26 @@
 //!   1. 前端 `src/bridge/channels.ts` 声明的命令与更新事件在 [`commands`] 中实现；
 //!   2. 本地数据库固定使用 SQLCipher 加密，密钥来自系统 Keychain（每设备随机生成并持久化，
 //!      首次启动完成初始化），见 [`keychain`] 与 [`db::connection`]；
-//!   3. 所有 HTTP 请求统一在 Rust 侧发起（[`http`]），前端不直连后端；
+//!   3. 所有 HTTP 请求统一在 Rust 侧发起：业务接口经 [`proxy`]（本地链路鉴权 → 重签名/重加密 → 转发
+//!      网关，与 console 同一条链路），非签名请求（如图片缓存）仍走 [`http`]，前端不直连后端；
 //!   4. 应用更新使用 `tauri-plugin-updater`（[`update`]）；
-//!   5. 不迁移老 Electron 侧的 `VITE_APP_SECRET` / `app_secret` 密钥链，新项目不保留该逻辑
-//!      （[`crypt`] 仅在显式配置环境变量时启用字段加密，未配置即透传）；
+//!   5. 本地链路密钥走环境变量 `TAURI_LINK_*`（口径同前端 `VITE_APP_*`），出站网关凭证走 `TAURI_APP_*`，
+//!      一律由 `.env.test` / `.env.production`（`npm run tauri:dev` 注入）或 `<AppData>/books.env` 密钥文件提供，
+//!      源码不内置任何密钥（见 [`config`]）；字段级加密仍在显式配置 `TAURI_FIELD_CRYPT_*` 时启用，未配置即透传；
 //!   6. 不修改 `tauri.conf.json` 已有配置（identifier / frontendDist 等保持原样）。
 
 mod commands;
+mod config;
 mod crypt;
 mod db;
 mod error;
 mod http;
+mod js;
 mod keychain;
+mod models;
 mod paths;
+mod proxy;
+mod response;
 mod state;
 mod update;
 
@@ -34,6 +41,21 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let handle = app.handle().clone();
+
+            // [框架统一] 与 console 同款：先绑定密钥文件（<AppData>/books.env），
+            // 之后 keychain / crypt / paths / update 一律经 config 统一入口读取；
+            // 打包后的应用从 Finder 启动不会继承 shell 环境变量，密钥文件是实际注入入口
+            config::init(handle.path().app_data_dir().ok());
+            let invalid = config::invalid_env();
+            if !invalid.is_empty() {
+                eprintln!("[config] 已配置但格式非法的环境变量: {}（对应能力将按缺省策略降级）", invalid.join(", "));
+            }
+            // [框架统一] 与 console 同款：本地链路密钥缺失时代理鉴权按失败关闭，这里先把原因讲清楚
+            let missing = config::missing_env();
+            if !missing.is_empty() {
+                eprintln!("[config] 本地链路密钥缺失或长度非法: {}（请求经 invoke 转发的接口会返回鉴权未配置错误）", missing.join(", "));
+            }
+
             let state = state::AppState::new();
             match bootstrap(&handle, &state) {
                 Ok(report) => {
@@ -75,7 +97,9 @@ pub fn run() {
             commands::app::confirm_update,
             commands::app::restart_app,
             commands::app::cache_file,
-            // 统一 HTTP（Rust 侧发起）
+            // 转发代理（等价老 Electron 本地服务：签名/加解密/网关转发）
+            commands::proxy::proxy_request,
+            // 统一 HTTP（Rust 侧发起：不经过网关签名的直连请求，如图片缓存）
             commands::http::http_request,
             commands::http::http_download,
             // 启动自检

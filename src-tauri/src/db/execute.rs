@@ -1,18 +1,19 @@
 //! 数据访问执行层：查询 / 计数 / 写入 / 更新 / 删除。
 //!
 //! 行为对齐老项目 model 层（base.ts），其中 filters / order 的构造见 `query.rs`，
-//! 字段 cast 见 `row.rs`。
+//! 字段 cast 见 [`crate::models::cast`]。
 
 use rusqlite::{params_from_iter, types::Value as SqlValue, Connection};
 use serde_json::{Map, Value};
 
-use super::models::ModelDef;
 use super::query::{
     build_products_where, build_where, json_to_sql, placeholders, quote_ident, Where,
 };
-use super::row::{cast_set, process_row, raw_row};
+use super::row::{process_row, raw_row};
 use crate::crypt::FieldCrypt;
 use crate::error::{AppError, AppResult};
+use crate::models::cast::cast_set;
+use crate::models::ModelDef;
 
 /// 写入模式
 #[derive(Clone, Copy, PartialEq, Eq)]

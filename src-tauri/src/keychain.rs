@@ -26,7 +26,7 @@ const KEY_FILE_NAME: &str = ".sqlcipher-key";
 /// 密钥来源（用于启动自检报告）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeySource {
-    /// 来自环境变量 EDTIB_DB_KEY_HEX（调试 / 自动化场景）
+    /// 来自环境变量 TAURI_DB_KEY_HEX（调试 / 自动化场景；含密钥文件 books.env 注入）
     EnvVar,
     /// 来自 macOS Keychain
     Keychain,
@@ -39,7 +39,7 @@ pub enum KeySource {
 impl KeySource {
     pub fn as_str(self) -> &'static str {
         match self {
-            KeySource::EnvVar => "env:EDTIB_DB_KEY_HEX",
+            KeySource::EnvVar => "env:TAURI_DB_KEY_HEX",
             KeySource::Keychain => "macos-keychain",
             KeySource::KeyFile => "key-file",
             KeySource::Generated => "generated",
@@ -56,17 +56,17 @@ pub struct DbKey {
 
 /// 读取已有密钥；不存在则随机生成并持久化（首次启动初始化）。
 pub fn load_or_create(data_dir: &Path) -> AppResult<DbKey> {
-    // 1) 环境变量优先（自动化测试 / CI）
-    if let Ok(hex_key) = std::env::var("EDTIB_DB_KEY_HEX") {
-        let hex_key = hex_key.trim().to_string();
-        if is_valid_hex_key(&hex_key) {
+    // 1) 环境变量优先（自动化测试 / CI）——经 config 统一入口：进程环境变量 > 密钥文件 books.env
+    let hex_key = crate::config::db_key_hex();
+    if !hex_key.is_empty() {
+        if is_valid_hex_key(hex_key) {
             return Ok(DbKey {
-                hex: hex_key,
+                hex: hex_key.to_lowercase(),
                 source: KeySource::EnvVar,
             });
         }
         return Err(AppError::bad_request(
-            "环境变量 EDTIB_DB_KEY_HEX 非法（需 64 位十六进制字符）",
+            "环境变量 TAURI_DB_KEY_HEX 非法（需 64 位十六进制字符）",
         ));
     }
 

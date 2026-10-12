@@ -13,6 +13,8 @@ import { createSvgIcons } from './svgSprite'
 import { createUnPlugin } from './unplugin'
 // import { createRollup } from './rollup/'
 import { port } from '../../src/config'
+// [框架统一] 与 console 共用同一份框架代码：日志前缀取 package.json name，禁止写死项目名
+import { name as pkgName } from '../../package.json'
 // import { createReplace } from './unplugin/replace'
 
 const vitePrefix = 'VITE_'
@@ -34,19 +36,21 @@ export const createVitePlugin = (env: Record<string, string>) => {
   // 迁移说明：老项目在此处对缺失授权码（VITE_APP_GITHUB_USER_NAME / VITE_APP_SECRET_KEY）
   // 的工程直接 `return`（返回 undefined），导致连 vue 插件本身都不注册、构建直接崩溃。
   // Tauri 迁移后改为「插件链始终按完整模式注册」，仅在缺失授权码时打印提示；
-  // 运行期的授权校验逻辑保持与老项目一致，未作改动。
+  // 运行期的授权校验逻辑（library/plugins/vab.ts 的 isCheck）保持与老项目一致，未作改动。
   if (isEmpty(userName) || isEmpty(secretKey)) {
     console.warn(
-      `\n${pc.yellow('[edtib-books]')} 未检测到 ${viteApp}GITHUB_USER_NAME / ${viteApp}SECRET_KEY（由 .env 与 .env.local 提供），已按完整插件链注册，跳过授权码校验提示。\n`
+      `\n${pc.yellow(`[${pkgName}]`)} 未检测到 ${viteApp}GITHUB_USER_NAME / ${viteApp}SECRET_KEY（由 .env 与 .env.local 提供），已按完整插件链注册，跳过授权码校验提示。\n`
     )
   }
-  if (nodeEnv !== 'development') if (isEmpty(userName) || isEmpty(secretKey)) console.warn(`\n${pc.yellow('[edtib-books]')} 生产环境缺少授权码，如为正式发布请补齐 .env.local。\n`)
+  if (nodeEnv !== 'development') if (isEmpty(userName) || isEmpty(secretKey)) console.warn(`\n${pc.yellow(`[${pkgName}]`)} 生产环境缺少授权码，如为正式发布请补齐 .env.local。\n`)
   vitePlugins.push(vueJsx())
   vitePlugins.push(createProgress(env) as any)
   vitePlugins.push(createUnPlugin(env))
   if (isTauri) {
     // 桌面端：跳过 PWA（SW 在 Tauri webview 不被支持，且会被 remove-dist-sw 清理）；改用 singlefile 内联
-    vitePlugins.push(viteSingleFile({ demoteModuleScripts: true }))
+    // 依赖里的 vite-plugin-singlefile 并无 demoteModuleScripts 选项（该选项属于另一分支），传入只会静默失效；
+    // 真要降级 module 脚本需同时设置 rollup output.format='iife'，此处维持默认行为不变
+    vitePlugins.push(viteSingleFile() as any)
   } else {
     vitePlugins.push(createPwa())
   }
@@ -72,18 +76,7 @@ export const createWatch = (env: Record<string, string>) => {
   const userName = env[`${viteApp}GITHUB_USER_NAME`]
   const secretKey = env[`${viteApp}SECRET_KEY`]
   const nodeEnv = env[`${viteUser}NODE_ENV`]
-  console.log(nodeEnv, userName, secretKey)
-
-  // if (nodeEnv === 'production') {
-  //   if (userName === 'test' || secretKey === 'preview') {
-  //     console.log(
-  //       `${pc.red(
-  //         '\u68c0\u6d4b\u5230\u60a8\u7684\u7528\u6237\u540d\u6216\u006b\u0065\u0079\u672a\u914d\u7f6e\uff0c\u006b\u0065\u0079\u5728\u8d2d\u4e70\u65f6\u901a\u8fc7\u90ae\u4ef6\u9080\u8bf7\u51fd\u53d1\u653e\uff0c\u5982\u60a8\u5df2\u8d2d\u4e70\u8bf7\u4ed4\u7ec6\u9605\u8bfb\u6587\u6863\u5e76\u8fdb\u884c\u914d\u7f6e\uff0c\u914d\u7f6e\u5b8c\u6210\u540e\u65b9\u53ef\u6253\u5305\u4f7f\u7528\u3002\u8d2d\u4e70\u5730\u5740\uff1a\u0068\u0074\u0074\u0070\u0073\u003a\u002f\u002f\u0076\u0075\u0065\u002d\u0061\u0064\u006d\u0069\u006e\u002d\u0062\u0065\u0061\u0075\u0074\u0069\u0066\u0075\u006c\u002e\u0063\u006f\u006d\u002f\u0061\u0075\u0074\u0068\u006f\u0072\u0069\u007a\u0061\u0074\u0069\u006f\u006e\u002f\u0073\u0068\u006f\u0070\u002d\u0076\u0069\u0074\u0065\u002e\u0068\u0074\u006d\u006c'
-  //       )}`
-  //     )
-  //     process.exit()
-  //   }
-  // }
+  // console.log(nodeEnv, userName, secretKey)
 
   if (nodeEnv === 'development') {
     chokidar.watch('./src/views').on('change', (path) => {

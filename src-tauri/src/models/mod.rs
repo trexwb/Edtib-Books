@@ -3,7 +3,9 @@
 //! 生成来源：legacy_models.json（解析结果见实现报告「模型元数据来源」）
 //! 说明：`fillable` / `guarded` / `hidden` / `casts` 与老模型 1:1 对应；
 //!       `primary_key` 分别对应各表主键（id / key / path / uuid）。
-//! 请勿手工编辑本文件——表结构变更请同步老模型后重新生成。
+//! 请勿手工编辑本文件的注册表部分——表结构变更请同步老模型后重新生成。
+
+pub mod cast;
 
 /// 字段转换类型（对应老项目 cast/*.ts）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

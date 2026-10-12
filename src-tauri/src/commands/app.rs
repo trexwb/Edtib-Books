@@ -8,8 +8,9 @@
 use serde_json::{json, Value};
 use tauri::{AppHandle, State};
 
-use crate::crypt::sha256_hex;
-use crate::error::{ok_envelope, AppError, AppResult};
+use crate::crypt::sha256;
+use crate::error::{AppError, AppResult};
+use crate::response::{self, Envelope};
 use crate::http;
 use crate::paths;
 use crate::state::AppState;
@@ -23,16 +24,16 @@ pub async fn get_app_version() -> AppResult<String> {
 
 /// check_update：检查更新并下发更新事件（老 `check-update`）
 #[tauri::command]
-pub async fn check_update(app: AppHandle) -> AppResult<Value> {
+pub async fn check_update(app: AppHandle) -> AppResult<Envelope> {
     let data = update::check_for_updates(&app).await?;
-    Ok(ok_envelope(data))
+    Ok(response::success(data))
 }
 
 /// confirm_update：确认安装已下载的更新（老 `confirm-update`）
 #[tauri::command]
-pub async fn confirm_update(app: AppHandle) -> AppResult<Value> {
+pub async fn confirm_update(app: AppHandle) -> AppResult<Envelope> {
     let data = update::confirm_update(&app)?;
-    Ok(ok_envelope(data))
+    Ok(response::success(data))
 }
 
 /// restart_app：重启应用（老 `restart-app`，该函数不返回）
@@ -97,7 +98,7 @@ pub async fn cache_file(
 
 /// 缓存文件名：URL 摘要前缀保证不同 URL 不互相覆盖，保留原始文件名便于排查
 fn cached_name(url: &str) -> String {
-    let digest = sha256_hex(url);
+    let digest = sha256(url);
     let short = digest.get(..16).unwrap_or(digest.as_str());
     match http::file_name_from_url(url) {
         Some(name) => {

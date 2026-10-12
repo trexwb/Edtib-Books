@@ -1,30 +1,55 @@
+/**
+ * @description axios 请求层：本地链路签名/加解密拦截器 + 统一响应处理
+ *
+ * [框架统一] books / console 同一份代码（改动需双侧同步）。
+ *
+ * 两条宿主链路（`src/utils/host.ts` 判定，切换只发生在下方 `instance.defaults.adapter` 一处）：
+ * ```text
+ * npm run tauri:dev / npm run build（桌面宿主，代理模型）
+ *   渲染层 axios → Tauri adapter（src/utils/tauriAdapter.ts）→ invoke('proxy_request')
+ *   → Rust proxy：用 TAURI_LINK_*（= 本端 VITE_APP_*）验签/解密 → 用 TAURI_APP_* 重签名重加密
+ *   → 请求 TAURI_APP_BASE_URL（或本地 secrets 表 app_url）对应的网关 → 解密回包再用本地链路加密返回
+ *
+ * npm run dev（浏览器宿主，直连模型）
+ *   渲染层 axios → vite /api 代理 → 测试网关：此时 VITE_APP_* 就是网关凭证，
+ *   网关要求的 X-Sign 由本文件请求拦截器直接补齐
+ * ```
+ *
+ * 密钥口径（详见 `.env.example`）：`VITE_APP_*` 在桌面宿主下是「本地链路对」，
+ * 在浏览器直连下是「被调用网关凭证」；`TAURI_APP_*` 只存在于 Rust 侧，渲染层拿不到。
+ *
+ * 契约要点：
+ * 1. `App-Secret = md5(sha256(appId + timeStamp + nonce) + appSecret) + timeStamp`，
+ *    nonce 32 位字母数字（CSPRNG），服务端按 `TOKEN_TIME`（1800s）判过期防重放；
+ * 2. 请求体加密为随机 IV 前置格式 `iv(hex):密文(hex)`（`VITE_REQUEST_ENCRYPT`），
+ *    回包解密同样优先按该格式，兼容老网关的固定 IV 纯密文（`VITE_APP_IV` 兜底）；
+ * 3. `X-Sign` 的签名对象是网关 `VerifySignature` 实际看到的 `{ ...req.query, ...req.body }`：
+ *    query 走「真正上送的那段字符串」还原成键值表（值一律字符串，与 Express 5 默认查询解析器同口径），
+ *    body 取冻结后的结构（加密场景为 `{ encryptedData }`），无参请求也要按 `{}` 出签；
+ * 4. 网络错误重试一次会重入拦截器：以首次冻结的 `signedBody` 为准，避免二次加密与签名漂移。
+ *
+ * @Author: trexwb
+ * @Date: 2026-10-12
+ */
 import { stringify } from 'qs'
-// import { refreshToken } from '/@/api/refreshToken';
+import CryptoJS from 'crypto-js'
+import { translate } from '/@/i18n'
 import { contentType, debounce, messageName, statusName, successCode, timeout } from '/@/config'
 import router from '/@/router'
 import { useUserStore } from '/@/store/modules/user'
 import { isArray } from '/@/utils/validate'
-// [P0-2 迁移修复] Tauri 环境统一经 Rust http_request 发起（生产包无 dev server 代理）
-import { computeXSign, isTauriRuntime, tauriHttpRequest } from '/@/utils/tauriHttp'
+import { isTauri } from '/@/utils/host'
+import { computeXSign, createTauriProxyAdapter, paramsToQuery, queryToSignFields } from '/@/utils/tauriAdapter'
 import { addErrorLog, needErrorLog } from '/@vab/plugins/errorLog'
 import { gp } from '/@vab/plugins/vab'
 
-// console.log('NODE_ENV:', import.meta.env.VITE_USER_NODE_ENV)
+const md5 = (str: string): string => CryptoJS.MD5(str).toString()
 
-import CryptoJS from 'crypto-js'
+// 与后端约定一致：请求签名摘要用 sha256（App-Secret / X-Sign 都基于它）
+const sha256 = (str: string): string => CryptoJS.SHA256(str).toString()
 
-const md5 = (str: string) => {
-  return CryptoJS.MD5(str).toString()
-}
-
-// 使用更安全的哈希算法 SHA - 256 替换 MD5
-const sha256 = (str: string): string => {
-  return CryptoJS.SHA256(str).toString()
-}
-
-// 加密函数
-// [P2-5 契约对齐] 网关 Crypto.encrypt 已升级为「随机 IV 前缀」格式（iv hex + ':' + cipher hex），
-// 客户端同步改为每次请求随机 IV 并前缀传输；VITE_APP_IV 仅作为读取旧格式响应的解密兜底。
+// 加密函数：每次使用随机 IV，输出 `iv(hex) + ':' + 密文(hex)`（与网关 Crypto.encrypt、
+// Rust 侧 crypt::encrypt_iv_prefixed 同格式；VITE_APP_IV 不再参与请求加密）
 const encrypt = (encryptedData: any, key: string): string => {
   if (key.length !== 32) {
     throw new Error('Invalid key length')
@@ -35,29 +60,26 @@ const encrypt = (encryptedData: any, key: string): string => {
   const encrypted = CryptoJS.AES.encrypt(encryptedText, keyWordArray, { iv: ivWordArray }).ciphertext.toString(CryptoJS.enc.Hex)
   return `${ivWordArray.toString(CryptoJS.enc.Hex)}:${encrypted}`
 }
-// 解密函数
-// 兼容后端两种响应格式：
-//   1) 新网关(UT-01)：随机 IV 前置，格式为 iv(hex) + ':' + 密文(hex)
-//   2) 旧网关：无 IV 前缀的纯密文 hex（使用传入的外部固定 IV）
+
+// 解密函数：兼容两种回包格式
+//   1) 新格式（网关 / Rust 代理）：随机 IV 前置 `iv(hex):密文(hex)`
+//   2) 老格式（老网关、老 Electron 本地服务）：无 IV 前缀的纯密文 hex，使用 VITE_APP_IV
 const decrypt = (encryptedText: string, key: string, iv: string): any => {
   if (key.length !== 32) {
     throw new Error('Invalid key length')
   }
-  // 将 key 转换为 CryptoJS WordArray 格式
   const keyWordArray = CryptoJS.enc.Utf8.parse(key)
 
   let ivWordArray: any
   let cipherHex: string
   const sepIndex = encryptedText.indexOf(':')
   if (sepIndex === 32) {
-    // 新格式：随机 IV 前置
     ivWordArray = CryptoJS.enc.Hex.parse(encryptedText.slice(0, sepIndex))
     cipherHex = encryptedText.slice(sepIndex + 1)
     if (ivWordArray.sigBytes !== 16) {
       throw new Error(`Invalid iv length: ${ivWordArray.sigBytes} bytes`)
     }
   } else {
-    // 旧格式：外部固定 IV
     if (iv.length !== 16) {
       throw new Error('Invalid iv length')
     }
@@ -70,27 +92,32 @@ const decrypt = (encryptedText: string, key: string, iv: string): any => {
   })
   const decrypted = CryptoJS.AES.decrypt(cipherParams, keyWordArray, { iv: ivWordArray }).toString(CryptoJS.enc.Utf8)
   if (import.meta.env.VITE_USER_NODE_ENV === 'development') console.log('Decrypted string:', decrypted)
-  // 验证解密后的字符串是否为有效的 JSON
   try {
     return JSON.parse(decrypted)
-  } catch (jsonError) {
+  } catch {
     throw new Error('Invalid JSON format after decryption')
   }
 }
 
-// [P1-4] 随机串改用 crypto.getRandomValues（CSPRNG），替换 Math.random
-const generateRandomString = (length: number) => {
-  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-  const bytes = new Uint8Array(length)
+// 防重放 nonce（32 位字母数字，供 App-Nonce 头与 App-Secret 计算使用）
+// 必须使用密码学随机源：Math.random 可预测，会让防重放 nonce 失去意义
+const NONCE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+const generateNonce = (): string => {
+  const bytes = new Uint8Array(32)
   crypto.getRandomValues(bytes)
   let result = ''
-  for (let i = 0; i < length; i++) {
-    result += characters.charAt(bytes[i] % characters.length)
-  }
+  for (let i = 0; i < bytes.length; i++) result += NONCE_ALPHABET.charAt(bytes[i] % NONCE_ALPHABET.length)
   return result
 }
 
-let loadingInstance: any
+// P1-1：loading 实例集合——debounce 名单内请求重试时拦截器重入会再建实例，
+// 单一引用被覆盖会令首个实例永不 close（永久 loading）；统一在响应后全部关闭
+const loadingInstances: any[] = []
+const closeLoadings = (): void => {
+  while (loadingInstances.length) loadingInstances.pop()?.close()
+}
+// P1-3：401/402 并发防抖标志，避免多个请求同时失效时重复 resetAll + 跳转
+let isResetting = false
 
 // 操作正常Code数组
 const codeVerificationArray = isArray(successCode) ? [...successCode] : [...[successCode]]
@@ -126,8 +153,9 @@ const requestConf = (config: any): any => {
   // 不规范写法 可根据setting.config.js tokenName配置随意自定义headers
   // if (token) config.headers[tokenName] = token
   const timeStamp = Math.floor(Date.now() / 1000).toString()
-  // C-G3: nonce 参与签名计算并随请求头发送，服务端缓存去重防重放
-  const nonce = generateRandomString(32)
+  const nonce = generateNonce()
+  // 本地链路鉴权三元组：桌面宿主下由 Rust middleware.token 校验，
+  // 浏览器直连下由网关 AuthenticateSecret 校验（算法同一条）
   config.headers['App-Id'] = `${import.meta.env.VITE_APP_ID}`
   config.headers['App-Nonce'] = nonce
   config.headers['App-Secret'] =
@@ -140,13 +168,12 @@ const requestConf = (config: any): any => {
   }
 
   const isForm = Boolean(config.data) && config.headers['Content-Type'] === 'application/x-www-form-urlencoded;charset=UTF-8'
-  // [P1-7 契约对齐] 首次进入拦截器时冻结「网关 verifySignature 实际看到的 body 结构」：
+  // 首次进入拦截器时冻结「网关 verifySignature 实际看到的 body 结构」：
   // 加密场景为 { encryptedData }，表单场景为序列化前的键值对象。
   // 重试时复用该结构，既避免对已加密 body 的二次加密，也避免签名漂移。
   if (config.signedBody === undefined) {
     const plainBody = config.data
     if (import.meta.env.VITE_REQUEST_ENCRYPT === 'true' && config.data) {
-      // [P2-5 契约对齐] 随机 IV 前缀格式，见 encrypt 注释；VITE_APP_IV 不再参与请求加密
       config.data = {
         encryptedData: encrypt(config.data, import.meta.env.VITE_APP_SECRET),
       }
@@ -155,11 +182,12 @@ const requestConf = (config: any): any => {
   }
   if (isForm && typeof config.data !== 'string') config.data = stringify(config.data)
 
-  // [P1-7] 网关 VERIFY_SIGNATURE=true 时所有 /api/** 请求（含 GET、含 dev 浏览器路径）都必须带 X-Sign，
-  // 与 Tauri 路径（tauriHttp.ts#computeXSign）使用同一算法与同一签名对象。
-  config.headers['X-Sign'] = computeXSign({ ...(config.params || {}), ...config.signedBody }, import.meta.env.VITE_APP_SECRET)
+  // X-Sign：网关 VERIFY_SIGNATURE=true 时所有 /api/** 请求（含 GET、含浏览器直连）都必须带签。
+  // 桌面宿主下 Rust 会用网关凭证重算覆盖本头，这里保留仅为口径统一、便于直连调试。
+  const signFields = { ...queryToSignFields(paramsToQuery(config.params)), ...config.signedBody }
+  config.headers['X-Sign'] = computeXSign(signFields, import.meta.env.VITE_APP_SECRET)
 
-  if (debounce.some((item: string) => config.url.includes(item))) loadingInstance = gp.$baseLoading()
+  if (debounce.some((item: string) => config.url.includes(item))) loadingInstances.push(gp.$baseLoading())
 
   return config
 }
@@ -187,8 +215,8 @@ const handleData = async ({
 }): Promise<any | any> => {
   const { resetAll, setToken } = useUserStore()
   if (headers['auth-token']) setToken(headers['auth-token'])
-  if (loadingInstance) loadingInstance.close()
-  // [P2-6] data 可能为空（204/空响应体），统一安全取值
+  closeLoadings()
+  // P2-6：data 可能为空（204 / 空响应体），统一安全取值，避免解构炸出误导性 TypeError
   const bodyCode = data && data[statusName] ? data[statusName] : null
   const statusCode = bodyCode !== null ? bodyCode : status
   let code = bodyCode !== null ? Number((bodyCode || 200).toString().substring(0, 3)) : status
@@ -199,22 +227,19 @@ const handleData = async ({
     // 有加密返回时解密
     data.data = await decrypt(data.encryptedData, import.meta.env.VITE_APP_SECRET, import.meta.env.VITE_APP_IV)
     delete data.encryptedData
-    if (import.meta.env.VITE_USER_NODE_ENV === 'development') console.log('data:', data)
+    if (import.meta.env.VITE_USER_NODE_ENV === 'development') console.log('decrypt:', { ...data })
   }
-  if (import.meta.env.VITE_USER_NODE_ENV === 'development' && data?.data) console.log('development:', { ...data.data })
   switch (code) {
     case 200:
       // 业务层级错误处理，以下是假定restful有一套统一输出格式(指不管成功与否都有相应的数据格式)情况下进行处理
       // 例如响应内容：
       // 错误内容：{ code: 1, msg: '非法参数' }
       // 正确内容：{ code: 200, data: {  }, msg: '操作正常' }
-      // return data
       return data
     case 401:
     case 402:
-      // C-B3/C-B5: 网关无真实 refreshToken 接口（原 tryRefreshToken 为死代码，令牌过期会令并发请求永久 pending），
-      // 令牌失效/过期统一登出并提前返回，避免继续触发错误提示与 rejection
-      // [P2-6] 并发 401 防抖：登出进行中不再重复触发，避免多次跳转
+      // 网关无真实 refreshToken 接口（令牌过期会令并发请求永久 pending），
+      // 失效/过期统一登出；并发只触发一次跳转，并统一 reject（与下方异常分支同语义）
       if (!isResetting) {
         isResetting = true
         resetAll().finally(() => {
@@ -222,8 +247,6 @@ const handleData = async ({
           router.push({ path: '/login', replace: true }).then(() => {})
         })
       }
-      // [P2-6] 令牌失效统一 reject（与下方异常分支同语义）：
-      // 原 return undefined 会让 store 里 `const { data: {...} } = await xxx()` 抛出与业务无关的 TypeError。
       return Promise.reject(data || { [statusName]: code, [messageName]: '登录已过期' })
     case 403:
       // return await setSiteConfig(config)
@@ -232,17 +255,21 @@ const handleData = async ({
   }
   // 异常处理
   // 若data.msg存在，覆盖默认提醒消息
-  const errMsg = `${CODE_MESSAGE[statusCode] ? CODE_MESSAGE[statusCode] : data && data[messageName] ? data[messageName] : '未知错误！请联系管理员'}`
+  const fallback = data && data[messageName] ? data[messageName] : '未知错误！请联系管理员'
+  const errMsg = CODE_MESSAGE[statusCode] ? translate(CODE_MESSAGE[statusCode]) : translate(fallback)
   // 是否显示高亮错误(与errorHandler钩子触发逻辑一致)
   gp.$baseMessage(errMsg, 'error', 'hey')
   if (needErrorLog()) addErrorLog({ message: errMsg, stack: data, isRequest: true })
   return Promise.reject(data)
 }
-// [P2-6] 401/402 登出防抖标记
-let isResetting = false
 
 /**
- * axios初始化
+ * @description axios初始化
+ *
+ * 宿主说明：
+ * - Tauri 桌面端：不启动本地 HTTP 服务，`baseURL` 只作为代理路径前缀（等价老链路
+ *   `req.originalUrl` 中的 `/api`），请求经 adapter 以 IPC 调用 `proxy_request` 转发网关；
+ * - 浏览器（`npm run dev`）：保留 axios 默认 adapter，直连 vite 代理后的测试网关。
  */
 const instance = axios.create({
   baseURL: `${import.meta.env.VITE_APP_BASE_URL || '/api'}`,
@@ -250,62 +277,28 @@ const instance = axios.create({
   headers: {
     'Content-Type': contentType,
   },
+  // 固定查询串序列化：让「上送的 query」与「参与 X-Sign / Rust 重签名的 query」严格同源
+  paramsSerializer: paramsToQuery,
 })
 
-/**
- * [P0-2] Tauri 环境统一请求入口。
- *
- * 生产包由 tauri://localhost 加载，axios 相对路径 baseURL 无 dev server 代理可解析；
- * 签名头（App-Id/App-Nonce/App-Secret/X-Sign）与加密体由 tauriHttpRequest 统一补齐，
- * 响应仍交 handleData 复用信封 code 分支 / 401 登出 / 错误提示。
- */
-const tauriRequest = async (config: any): Promise<any> => {
-  // 模拟 requestConf 中被 handleData 消费的字段
-  const merged = { retryCount: 0, ...config }
-  const { token } = useUserStore()
-  let response: any
-  try {
-    response = await tauriHttpRequest({
-      url: merged.url,
-      method: merged.method,
-      data: merged.data,
-      params: merged.params,
-      // [P0-2 补全] tauriRequest 不经 axios 请求拦截器，Bearer 头必须在此显式注入，
-      // 否则 Tauri 生产包所有需鉴权的接口一律 401（requestConf 只在浏览器路径生效）。
-      headers: { ...(merged.headers || {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    })
-  } catch (error) {
-    // invoke 失败即 Rust 侧网络层错误，对应 axios 路径的 response === undefined 分支；
-    // 不兜底会把裸 AppError 直接抛给业务层，既不提示用户也丢失 loading 关闭时机。
-    if (loadingInstance) loadingInstance.close()
-    gp.$baseMessage(
-      '连接后台接口失败，可能由以下原因造成：后端服务未启动、接口地址不存在、请求超时等，请联系管理员排查后端接口问题 ',
-      'error',
-      'hey'
-    )
-    return Promise.reject(error)
-  }
-  return handleData(response)
-}
+// Tauri 宿主唯一切换点：拦截器（签名、加密、handleData）两条链路共用，adapter 只负责出网方式
+if (isTauri()) instance.defaults.adapter = createTauriProxyAdapter()
 
 /**
- * 统一请求入口：Tauri 环境走 Rust http_request，其余（dev 浏览器）走 axios。
- * 保留 axios 实例导出形态（default export 可调用、可挂拦截器），调用方无感。
+ * 统一请求入口：保留可调用形态（default export 可挂拦截器），调用方无感。
+ * 响应拦截器已把结果拆成业务信封，因此这里声明为 Promise<any> 而不是 AxiosResponse。
  */
-const request = async (config: any): Promise<any> => {
-  if (isTauriRuntime()) return tauriRequest(config)
-  return instance(config)
-}
+const request = (config: any): Promise<any> => instance(config)
 
 /**
- * axios请求拦截器
+ * @description axios请求拦截器
  */
 instance.interceptors.request.use(requestConf, (error) => {
   return Promise.reject(error)
 })
 
 /**
- * axios响应拦截器
+ * @description axios响应拦截器
  */
 instance.interceptors.response.use(
   // 2xx 范围内的状态码都会触发该函数。
@@ -316,19 +309,23 @@ instance.interceptors.response.use(
     // 网络错误时重试一次（仅在无响应时，即真正的网络问题）
     if (response === undefined && config?.retryCount < 1) {
       config.retryCount++
-      // [P1-7] 只交给实例重跑一次拦截器：此前手动调用 requestConf 会让加密/序列化被执行两遍
+      // 只交给实例重跑一次拦截器（App-Secret 时间戳/nonce 需重算）：
+      // 拦截器以冻结的 signedBody 为准，不会二次加密或重复序列化
       return instance(config)
     }
     if (response === undefined) {
-      if (loadingInstance) loadingInstance.close()
+      closeLoadings()
       gp.$baseMessage(
-        '连接后台接口失败，可能由以下原因造成：后端不支持跨域CORS、接口地址不存在、请求超时等，请联系管理员排查后端接口问题 ',
+        translate(
+          '连接后台接口失败，可能由以下原因造成：后端不支持跨域CORS、接口地址不存在、请求超时等，请联系管理员排查后端接口问题'
+        ),
         'error',
         'hey'
       )
-      // [P2-6] 保持 reject 语义（原 return {} 吞错会让调用方解构 data 时炸出误导性 TypeError）
+      // P2-6：保持 reject 语义（原 return {} 吞错会让调用方解构 data 时炸出误导性 TypeError）
       return Promise.reject(new Error('Network unreachable'))
-    } else return handleData(response)
+    }
+    return handleData(response)
   }
 )
 
