@@ -9,7 +9,8 @@
   "homepage": "https://edtib.com/",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "build": "NODE_OPTIONS=--max-old-space-size=4096 VITE_CONFIG_NATIVE_IGNORE_WARNING=true vite build",
+    "build:check": "vue-tsc --noEmit && NODE_OPTIONS=--max-old-space-size=4096 VITE_CONFIG_NATIVE_IGNORE_WARNING=true vite build",
     "typecheck": "vue-tsc --noEmit",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -112,7 +113,7 @@
     "stylelint-config-recommended-scss": "^17.0.1",
     "stylelint-config-recommended-vue": "^2.0.0",
     "terser": "^5.51.2",
-    "typescript": "^7.0.2",
+    "typescript": "~6.0.3",
     "unplugin-auto-import": "^21.1.0",
     "unplugin-vue-components": "^32.1.0",
     "vite": "^8.3.4",
