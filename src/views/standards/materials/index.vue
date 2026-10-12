@@ -2,7 +2,6 @@
  * @Author: trexwb
  * @Date: 2026-09-11
  * @LastEditTime: 2026-09-14 11:42:02
- * @FilePath: /fastenerTradeWorkbench/Users/wbtrex/website/localServer/node/edtib/client/books/web/src/views/standards/materials/index.vue
  * @Description: 材料标准（免费内容）：注册用户全部可见，无积分购买 / 订阅门禁。
  * 一花一世界，一叶一如来
  * Copyright (c) 2025 by 杭州大美, All Rights Reserved.
