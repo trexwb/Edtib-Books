@@ -15,11 +15,6 @@ use serde_json::{Number, Value};
 use crate::error::{AppError, AppResult};
 use crate::models::ModelDef;
 
-/// 与老实现一致的默认分页参数
-pub const DEFAULT_LIMIT: i64 = 10;
-/// 与老实现一致的分页上限
-pub const MAX_LIMIT: i64 = 1000;
-
 // ---------------------------------------------------------------------------
 // 值转换
 // ---------------------------------------------------------------------------
@@ -99,14 +94,6 @@ impl Where {
     pub fn push(&mut self, clause: impl Into<String>, params: Vec<SqlValue>) {
         self.parts.push(clause.into());
         self.params.extend(params);
-    }
-
-    /// 追加一个 AND 组（组内已自带括号）
-    pub fn push_group(&mut self, group: Where) {
-        if group.parts.is_empty() {
-            return;
-        }
-        self.push(format!("({})", group.parts.join(" AND ")), group.params);
     }
 
     pub fn is_empty(&self) -> bool {

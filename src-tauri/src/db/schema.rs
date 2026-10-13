@@ -320,30 +320,3 @@ CREATE INDEX IF NOT EXISTS "idx_products_filter_category" ON "products_filter" (
 CREATE INDEX IF NOT EXISTS "idx_products_filter_shape" ON "products_filter" ("product_type", "shape_id");
 CREATE INDEX IF NOT EXISTS "idx_products_filter_standard" ON "products_filter" ("product_type", "standard_id");
 "#;
-
-/// 每张表的列清单（供自检 / 调试使用）
-pub const TABLE_COLUMNS: &[(&str, &[&str])] = &[
-    ("seeds", &["id", "name", "batch", "migration_time"]),
-    ("configs", &["id", "key", "value", "created_at", "updated_at"]),
-    ("secrets", &["id", "title", "app_id", "app_secret", "app_iv", "app_url", "extension", "status", "created_at", "updated_at"]),
-    ("users", &["id", "nickname", "truename", "email", "mobile", "avatar", "auth_token", "uuid", "times_expire", "credit", "extension", "status", "created_at", "updated_at"]),
-    ("files", &["type", "url", "path", "source", "created_at", "updated_at"]),
-    ("schedules", &["id", "name", "time", "handler", "status", "created_at", "updated_at", "deleted_at"]),
-    ("enums", &["id", "enum_type", "enum_key", "descriptions", "status", "created_at", "updated_at", "deleted_at"]),
-    ("variables", &["id", "names", "type", "code", "variable", "remarks", "extension", "sort", "status", "created_at", "updated_at"]),
-    ("standards", &["id", "names", "abbreviation", "covers", "remarks", "extension", "total", "sort", "status", "created_at", "updated_at"]),
-    ("shapes", &["id", "location", "names", "abbreviation", "covers", "remarks", "extension", "total", "sort", "status", "created_at", "updated_at"]),
-    ("formulas", &["id", "type", "shape_id", "names", "code", "columnar", "remarks", "extension", "sort", "status", "created_at", "updated_at"]),
-    ("categories", &["id", "parent_id", "names", "abbreviation", "covers", "remarks", "extension", "total", "sort", "standards", "shapes", "status", "created_at", "updated_at"]),
-    ("products", &["id", "standard", "standard_id", "categories", "categories_id", "shapes", "shapes_id", "names", "grade", "code", "year", "covers", "svgs", "renders", "cads", "assemblies", "models", "detail", "parameters", "tolerance", "diameter_length", "drawing_limit", "formulas", "interpretation", "extension", "sort", "status", "created_at", "updated_at"]),
-    ("interpretations", &["id", "product_id", "titles", "detail", "keywords", "extension", "status", "created_at", "updated_at"]),
-    ("docs", &["id", "file_id", "title", "path", "detail", "credit", "times_expire", "extension", "status", "created_at", "updated_at"]),
-    ("downloads", &["id", "doc_id", "uuid", "use_credit", "use_limit", "down_url", "times_expire", "created_at", "updated_at"]),
-    ("modifications", &["key", "total", "created_at", "updated_at"]),
-    ("docs_hits", &["id", "doc_id", "uuid", "created_at", "updated_at"]),
-    ("docs_browsers", &["id", "doc_id", "uuid", "name", "product", "keywords", "extension", "created_at", "updated_at"]),
-    ("docs_logs", &["id", "doc_id", "uuid", "name", "product", "keywords", "extension", "created_at", "updated_at"]),
-    ("downloads_logs", &["id", "doc_id", "uuid", "name", "product", "keywords", "extension", "created_at", "updated_at"]),
-    ("serials", &["id", "batch", "code", "secret", "type", "level", "days", "credit", "price", "remark", "extension", "times_expire", "uuid", "status", "created_at", "updated_at", "deleted_at"]),
-    ("products_filter", &["id", "product_type", "product_id", "category_id", "shape_id", "standard_id", "extension", "sort", "created_at", "updated_at"]),
-];

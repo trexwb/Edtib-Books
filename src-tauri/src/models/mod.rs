@@ -21,6 +21,9 @@ pub enum CastKind {
     /// cast/datetime.ts：格式化为 YYYY-MM-DD HH:mm:ss
     Datetime,
     /// cast/boolean.ts：读取 !!,  写入 '1' / '0'
+    /// [与 console 同构] console 的 `Cast::Boolean` 同样未被任何模型声明使用，两侧都以 allow 保留
+    /// 与老项目 `cast/` 目录的一一对应关系；新增布尔列时直接声明即可，无需再补转换。
+    #[allow(dead_code)]
     Boolean,
     /// cast/crypt.ts：AES-256-CBC（新项目未内置密钥，未配置时透传）
     Crypt,
@@ -41,8 +44,6 @@ pub struct ModelDef {
     pub hidden: &'static [&'static str],
     /// 字段转换规则
     pub casts: &'static [(&'static str, CastKind)],
-    /// 老项目对应的 model 文件名（审计用）
-    pub legacy: &'static str,
 }
 
 impl ModelDef {
@@ -79,11 +80,6 @@ impl ModelDef {
         }
         fields
     }
-
-    /// 是否存在某字段（用于关键字检索字段裁剪）
-    pub fn has_field(&self, field: &str) -> bool {
-        self.writable_fields().contains(&field)
-    }
 }
 
 /// 老项目允许访问的表（`loadModel` 的白名单）
@@ -95,7 +91,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at"],
         hidden: &[],
         casts: &[("parent_id", CastKind::IntegerOrNull), ("names", CastKind::Json), ("abbreviation", CastKind::String), ("covers", CastKind::Json), ("remarks", CastKind::Json), ("extension", CastKind::Json), ("total", CastKind::Integer), ("sort", CastKind::Integer), ("standards", CastKind::Json), ("shapes", CastKind::Json), ("status", CastKind::Integer)],
-        legacy: "categories",
     },
     ModelDef {
         table: "configs",
@@ -104,7 +99,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at"],
         hidden: &[],
         casts: &[("key", CastKind::String), ("value", CastKind::Crypt)],
-        legacy: "configs",
     },
     ModelDef {
         table: "docs",
@@ -113,7 +107,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at", "deleted_at"],
         hidden: &[],
         casts: &[("names", CastKind::Json), ("content", CastKind::String), ("type", CastKind::String), ("extension", CastKind::Json), ("sort", CastKind::Integer), ("status", CastKind::Integer)],
-        legacy: "docs",
     },
     ModelDef {
         table: "docs_browsers",
@@ -122,7 +115,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at"],
         hidden: &[],
         casts: &[("doc_id", CastKind::Integer), ("uuid", CastKind::String), ("name", CastKind::String), ("product", CastKind::String), ("keywords", CastKind::String), ("extension", CastKind::Json)],
-        legacy: "docs_browsers",
     },
     ModelDef {
         table: "docs_hits",
@@ -131,7 +123,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at"],
         hidden: &[],
         casts: &[("doc_id", CastKind::Integer), ("uuid", CastKind::String)],
-        legacy: "docs_hits",
     },
     ModelDef {
         table: "docs_logs",
@@ -140,7 +131,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at"],
         hidden: &[],
         casts: &[("doc_id", CastKind::Integer), ("uuid", CastKind::String), ("name", CastKind::String), ("product", CastKind::String), ("keywords", CastKind::String), ("extension", CastKind::Json)],
-        legacy: "docs_logs",
     },
     ModelDef {
         table: "downloads_logs",
@@ -149,7 +139,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at"],
         hidden: &[],
         casts: &[("doc_id", CastKind::Integer), ("uuid", CastKind::String), ("name", CastKind::String), ("product", CastKind::String), ("keywords", CastKind::String), ("extension", CastKind::Json)],
-        legacy: "downloads_logs",
     },
     ModelDef {
         table: "enums",
@@ -158,7 +147,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at"],
         hidden: &[],
         casts: &[("type", CastKind::String), ("key", CastKind::String), ("value", CastKind::String), ("sort", CastKind::Integer), ("status", CastKind::Integer)],
-        legacy: "enums",
     },
     ModelDef {
         table: "files",
@@ -167,7 +155,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at"],
         hidden: &[],
         casts: &[("type", CastKind::String), ("url", CastKind::String), ("path", CastKind::String), ("source", CastKind::String), ("status", CastKind::Integer)],
-        legacy: "files",
     },
     ModelDef {
         table: "formulas",
@@ -176,7 +163,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at"],
         hidden: &[],
         casts: &[("type", CastKind::Integer), ("shape_id", CastKind::IntegerOrNull), ("names", CastKind::Json), ("code", CastKind::String), ("columnar", CastKind::Crypt), ("remarks", CastKind::Json), ("extension", CastKind::Json), ("sort", CastKind::Integer), ("status", CastKind::Integer)],
-        legacy: "formulas",
     },
     ModelDef {
         table: "modifications",
@@ -185,7 +171,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at"],
         hidden: &[],
         casts: &[("key", CastKind::String), ("total", CastKind::Integer)],
-        legacy: "modifications",
     },
     ModelDef {
         table: "products",
@@ -194,7 +179,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at"],
         hidden: &[],
         casts: &[("standard", CastKind::String), ("standard_id", CastKind::Integer), ("categories", CastKind::Crypt), ("categories_id", CastKind::Json), ("shapes", CastKind::Crypt), ("shapes_id", CastKind::Json), ("names", CastKind::Json), ("grade", CastKind::String), ("code", CastKind::String), ("year", CastKind::String), ("covers", CastKind::Json), ("svgs", CastKind::Crypt), ("renders", CastKind::Crypt), ("cads", CastKind::Crypt), ("assemblies", CastKind::Crypt), ("models", CastKind::Crypt), ("detail", CastKind::Crypt), ("parameters", CastKind::Crypt), ("tolerance", CastKind::Crypt), ("diameter_length", CastKind::Crypt), ("drawing_limit", CastKind::Crypt), ("formulas", CastKind::Crypt), ("interpretation", CastKind::Crypt), ("extension", CastKind::Json), ("sort", CastKind::Integer), ("status", CastKind::Integer)],
-        legacy: "products",
     },
     ModelDef {
         table: "schedules",
@@ -203,7 +187,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at", "deleted_at"],
         hidden: &[],
         casts: &[("name", CastKind::String), ("time", CastKind::String), ("handler", CastKind::Json), ("status", CastKind::Integer)],
-        legacy: "schedules",
     },
     ModelDef {
         table: "secrets",
@@ -212,7 +195,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at"],
         hidden: &[],
         casts: &[("title", CastKind::String), ("app_id", CastKind::String), ("app_secret", CastKind::Crypt), ("app_iv", CastKind::Crypt), ("app_url", CastKind::String), ("extension", CastKind::Json), ("status", CastKind::Integer)],
-        legacy: "secrets",
     },
     ModelDef {
         table: "serials",
@@ -221,7 +203,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at", "deleted_at"],
         hidden: &["secret"],
         casts: &[("batch", CastKind::String), ("code", CastKind::String), ("secret", CastKind::String), ("type", CastKind::Integer), ("level", CastKind::Integer), ("days", CastKind::Integer), ("credit", CastKind::Integer), ("price", CastKind::Integer), ("remark", CastKind::String), ("extension", CastKind::Json), ("times_expire", CastKind::Datetime), ("uuid", CastKind::String), ("status", CastKind::Integer)],
-        legacy: "serials",
     },
     ModelDef {
         table: "shapes",
@@ -230,7 +211,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at"],
         hidden: &[],
         casts: &[("location", CastKind::Integer), ("names", CastKind::Json), ("abbreviation", CastKind::String), ("covers", CastKind::Json), ("remarks", CastKind::Json), ("extension", CastKind::Json), ("total", CastKind::Integer), ("sort", CastKind::Integer), ("status", CastKind::Integer)],
-        legacy: "shapes",
     },
     ModelDef {
         table: "standards",
@@ -239,7 +219,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at"],
         hidden: &[],
         casts: &[("names", CastKind::Json), ("abbreviation", CastKind::String), ("covers", CastKind::Json), ("remarks", CastKind::Json), ("extension", CastKind::Json), ("total", CastKind::Integer), ("sort", CastKind::Integer), ("status", CastKind::Integer)],
-        legacy: "standards",
     },
     ModelDef {
         table: "users",
@@ -248,7 +227,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at"],
         hidden: &[],
         casts: &[("nickname", CastKind::String), ("truename", CastKind::String), ("email", CastKind::String), ("mobile", CastKind::String), ("avatar", CastKind::String), ("password", CastKind::String), ("salt", CastKind::String), ("auth_token", CastKind::String), ("uuid", CastKind::String), ("secret", CastKind::String), ("times_expire", CastKind::Datetime), ("credit", CastKind::Integer), ("extension", CastKind::Json), ("status", CastKind::Integer)],
-        legacy: "users",
     },
     ModelDef {
         table: "variables",
@@ -257,7 +235,6 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at"],
         hidden: &[],
         casts: &[("names", CastKind::Json), ("type", CastKind::String), ("code", CastKind::String), ("variable", CastKind::String), ("remarks", CastKind::Json), ("sort", CastKind::Integer), ("status", CastKind::Integer)],
-        legacy: "variables",
     },
     ModelDef {
         // 新项目新增：产品筛选缓存表（前端 ProductsFilter.vue 直接调用 db_find_all('products_filter')，
@@ -268,30 +245,10 @@ pub static MODELS: &[ModelDef] = &[
         guarded: &["created_at", "updated_at"],
         hidden: &[],
         casts: &[("sort", CastKind::Integer), ("status", CastKind::Integer)],
-        legacy: "-",
     },
 ];
 
-/// 额外放行的表（不属于老 MODELS 白名单，但前端桥接层需要）
-pub static EXTRA_TABLES: &[&str] = &["products_filter"];
-
-/// 按表名查找模型定义
+/// 按表名查找模型定义（未注册的表即视为不可访问）
 pub fn lookup(table: &str) -> Option<&'static ModelDef> {
     MODELS.iter().find(|model| model.table == table)
-}
-
-/// 表名是否允许访问
-pub fn is_allowed(table: &str) -> bool {
-    lookup(table).is_some() || EXTRA_TABLES.contains(&table)
-}
-
-/// 所有允许访问的表名
-pub fn allowed_tables() -> Vec<&'static str> {
-    let mut tables: Vec<&'static str> = MODELS.iter().map(|model| model.table).collect();
-    for table in EXTRA_TABLES {
-        if !tables.contains(table) {
-            tables.push(table);
-        }
-    }
-    tables
 }

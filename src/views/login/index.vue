@@ -2,7 +2,7 @@
  * @Author: trexwb
  * @Date: 2023-11-14 11:28:18
  * @LastEditors: ${git_name}
- * @LastEditTime: 2026-10-12 13:59:22
+ * @LastEditTime: 2026-10-13 09:56:02
  * @Description: 
  * 一花一世界，一叶一如来
  * Copyright (c) 2024 by 杭州大美, All Rights Reserved. 
@@ -255,7 +255,7 @@ const form = ref<any>(
   Object.assign(
     {
       username: loginFormData['username'] || (process.env.NODE_ENV === 'development' ? 'wangbin@edtib.com' : ''),
-      password: 'WxzLyR3PPRFvPm8f',
+      password: process.env.NODE_ENV === 'development' ? 'WxzLyR3PPRFvPm8f' : '',
       uuid: '',
       secret: '',
       verificationCode: '',

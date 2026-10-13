@@ -156,20 +156,6 @@ impl Database {
             Ok(names)
         })
     }
-
-    /// 单表行数（缺失表返回 0）
-    pub fn table_row_count(&self, table: &str) -> AppResult<i64> {
-        let ident = super::query::quote_ident(table)?;
-        self.with(|conn| {
-            let count: Option<i64> = conn
-                .query_row(&format!("SELECT count(*) FROM {ident};"), [], |row| {
-                    row.get::<_, i64>(0)
-                })
-                .optional()
-                .unwrap_or(None);
-            Ok(count.unwrap_or(0))
-        })
-    }
 }
 
 /// 把老版 Electron 的**明文** SQLite 库导出为 SQLCipher 加密库（首次启动搬迁旧数据）。
